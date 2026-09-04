@@ -1,0 +1,20 @@
+# Rust build output — regenerable and large.
+skills/favro/favro-cli/target/
+
+# Runtime API/ID cache. Machine-local, and it holds IDs for real organizations
+# and collections, so it must never be committed.
+favro-state.json
+state.json
+
+# Credentials. favro-cli reads FAVRO_EMAIL / FAVRO_TOKEN from the environment or
+# from an env file. Nothing here holds one today; this keeps it that way.
+.env
+.env.*
+*.env
+
+# Per-project Favro configuration belongs in the consuming repository, not here.
+.favro/
+
+# Python bytecode (watcher component, when added).
+__pycache__/
+*.pyc

@@ -1,0 +1,8 @@
+{
+  "_comment": "Merge the permissions.allow entry below into ~/.claude/settings.json or <project>/.claude/settings.json. Do not copy this file wholesale — it is a fragment, and _comment is not a real setting.",
+  "permissions": {
+    "allow": [
+      "Bash(favro *)"
+    ]
+  }
+}
