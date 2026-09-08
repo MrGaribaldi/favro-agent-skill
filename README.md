@@ -43,7 +43,7 @@ Read [the skill](skills/favro/SKILL.md) for operating rules, then the references
 skills/favro/          the portable skill — point your runtime here
 ├── SKILL.md           operating rules
 ├── references/        configuration, workflow, CLI, development profile
-└── favro-cli/         the Rust CLI (crate name: favro)
+└── favro-cli/         the Rust CLI (crate: favro-cli, command: favro)
 integrations/          per-runtime wiring: install steps, permission snippets
 ```
 
