@@ -6,7 +6,7 @@ vendored somewhere other than ./vendor/favro-agent-skill.
 ## Favro coordination
 
 Track work, questions, decisions, risks and deliverables in Favro using the
-`favro` CLI. Before any Favro command, run `favro --version` and require 0.2.0
+`favro` CLI. Before any Favro command, run `favro --version` and require 0.2.1
 or newer; a missing `--version` flag means a stale pre-0.2 binary — stop and
 reinstall rather than continuing.
 

@@ -12,6 +12,7 @@
 //! `cardId`, NOT the `cardCommonId`. Passing a cardCommonId there returns a
 //! misleading `403 Access denied`. `move` therefore resolves the cardId first.
 
+mod attachments;
 mod config;
 
 use base64::Engine;
@@ -591,6 +592,40 @@ struct Api {
 }
 
 impl Api {
+    fn write_description(&self, before: &Value, description: &str) {
+        let description =
+            attachments::preserve_in_markdown(before, &checkboxes_to_markdown(description))
+                .unwrap_or_else(|error| die(error));
+        let card_id = before
+            .get("cardId")
+            .and_then(Value::as_str)
+            .unwrap_or_else(|| die("Card has no cardId; description was not changed."));
+        self.request(
+            "PUT",
+            &format!("/cards/{card_id}"),
+            &md_format(),
+            Some(json!({"detailedDescription": description})),
+            None,
+        );
+        self.verify_attachments(before, card_id);
+    }
+
+    /// Re-read the exact instance, including archived cards, after a mutation.
+    fn verify_attachments(&self, before: &Value, card_id: &str) {
+        let (after, _) = self
+            .try_request("GET", &format!("/cards/{card_id}"), &[], None, None)
+            .unwrap_or_else(|error| {
+                die(format!(
+                    "Card {card_id} was updated, but attachment verification failed: {error}"
+                ))
+            });
+        if after.get("cardId").and_then(Value::as_str) != Some(card_id) {
+            die(format!("Card {card_id} was updated, but attachment verification returned an invalid card response."));
+        }
+        attachments::verify(before, &after)
+            .unwrap_or_else(|error| die(format!("Card {card_id}: {error}")));
+    }
+
     fn new(org: String) -> Self {
         let (email, token) = creds();
         let auth = base64::engine::general_purpose::STANDARD.encode(format!("{email}:{token}"));
@@ -1111,6 +1146,20 @@ fn find_card(api: &Api, collection: &str, card_common_id: &str) -> Value {
     let cards = api.paginate("/cards", &[("cardCommonId", card_common_id.to_string())]);
     select_card_instance(cards, &selected_widgets, card_common_id, collection)
         .unwrap_or_else(|error| die(error))
+}
+
+/// Get a fresh snapshot of the exact instance, rather than relying on paginated
+/// list data for a destructive whole-description update.
+fn find_description_card(api: &Api, collection: &str, card: &str) -> Value {
+    let selected = find_card(api, collection, card);
+    let card_id = selected
+        .get("cardId")
+        .and_then(Value::as_str)
+        .unwrap_or_else(|| die("Card has no cardId; description was not changed."));
+    // Plaintext excludes file image nodes. write_description reconstructs those
+    // from attachments, keeping them out of managed notes/result/TODO blocks.
+    let (snapshot, _) = api.request("GET", &format!("/cards/{card_id}"), &[], None, None);
+    snapshot
 }
 
 fn find_archive_target(
@@ -1908,6 +1957,8 @@ fn main() {
                         "FAILED: Favro did not return the updated card instance {card_id}."
                     ))
                 });
+            attachments::verify(&c, &after)
+                .unwrap_or_else(|error| die(format!("Card {card_id}: {error}")));
             let now = after
                 .get("archived")
                 .and_then(|v| v.as_bool())
@@ -1959,7 +2010,18 @@ fn main() {
             // cardCommonId, so nothing is lost either way.
             let selected_widgets = collection_widget_ids(&api, &collection);
             let instances = api.paginate("/cards", &[("cardCommonId", card.clone())]);
-            let mut on_target = false;
+            let target = instances.iter().find(|instance| {
+                instance.get("widgetCommonId").and_then(Value::as_str) == Some(wid.as_str())
+                    && instance.get("archived").and_then(Value::as_bool) != Some(true)
+            }).unwrap_or_else(|| die(format!(
+                "FAILED: #{seq} did not appear on {board:?}. Left the original alone; nothing was archived."
+            )));
+            let target_id = target
+                .get("cardId")
+                .and_then(Value::as_str)
+                .unwrap_or_else(|| die("Destination card has no cardId; nothing was archived."));
+            // Verify the destination before retiring any source instance.
+            api.verify_attachments(&c, target_id);
             let mut retired = 0usize;
             for inst in &instances {
                 let iw = inst
@@ -1971,9 +2033,7 @@ fn main() {
                     .get("archived")
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false);
-                if iw == wid && !archived {
-                    on_target = true;
-                } else if selected_widgets.contains(iw) && !archived {
+                if iw != wid && selected_widgets.contains(iw) && !archived {
                     api.request(
                         "PUT",
                         &format!("/cards/{iid}"),
@@ -1981,14 +2041,11 @@ fn main() {
                         Some(json!({"archive": true})),
                         None,
                     );
+                    api.verify_attachments(inst, iid);
                     retired += 1;
                 }
             }
-            if !on_target {
-                die(format!(
-                    "FAILED: #{seq} did not appear on {board:?}. Left the original alone; nothing was archived."
-                ));
-            }
+            api.verify_attachments(&c, target_id);
             println!(
                 "Moved #{seq} [{card}] -> {board}/{lane}{}",
                 if retired > 0 {
@@ -2118,12 +2175,7 @@ fn main() {
             const START: &str = "<!-- 🤖 NOTES -->";
             const END: &str = "<!-- /🤖 NOTES -->";
             let api = api_handle();
-            let c = find_card(&api, &collection, &card);
-            let card_id = c
-                .get("cardId")
-                .and_then(|v| v.as_str())
-                .unwrap_or_default()
-                .to_string();
+            let c = find_description_card(&api, &collection, &card);
             let desc = checkboxes_to_markdown(
                 c.get("detailedDescription")
                     .and_then(|v| v.as_str())
@@ -2131,13 +2183,7 @@ fn main() {
             );
             let block = format!("{START}\n{}\n{END}", unescape(&text));
             let newdesc = place_managed_block(&desc, START, END, &block, false);
-            api.request(
-                "PUT",
-                &format!("/cards/{card_id}"),
-                &md_format(),
-                Some(json!({"detailedDescription": newdesc})),
-                None,
-            );
+            api.write_description(&c, &newdesc);
             println!("Updated 🤖 notes on {card}");
         }
         Cmd::SetTodo {
@@ -2176,7 +2222,7 @@ fn main() {
                 _ => None,
             };
             let api = api_handle();
-            let c = find_card(&api, &collection, &card);
+            let c = find_description_card(&api, &collection, &card);
             let card_id = c
                 .get("cardId")
                 .and_then(|v| v.as_str())
@@ -2240,13 +2286,7 @@ fn main() {
                 place_managed_block(&rest, START, END, &block, true)
             };
 
-            api.request(
-                "PUT",
-                &format!("/cards/{card_id}"),
-                &md_format(),
-                Some(json!({"detailedDescription": newdesc})),
-                None,
-            );
+            api.write_description(&c, &newdesc);
 
             if let Some(config) = project.as_ref() {
                 let mut handoff = serde_json::Map::new();
@@ -2284,6 +2324,7 @@ fn main() {
                         Some(Value::Object(handoff)),
                         None,
                     );
+                    api.verify_attachments(&c, &card_id);
                 }
             }
             if clear {
@@ -2297,30 +2338,15 @@ fn main() {
         }
         Cmd::SetDesc { card, text } => {
             let api = api_handle();
-            let card_id = find_card(&api, &collection, &card)
-                .get("cardId")
-                .and_then(|v| v.as_str())
-                .unwrap_or_default()
-                .to_string();
-            api.request(
-                "PUT",
-                &format!("/cards/{card_id}"),
-                &md_format(),
-                Some(json!({"detailedDescription": unescape(&text)})),
-                None,
-            );
+            let c = find_description_card(&api, &collection, &card);
+            api.write_description(&c, &unescape(&text));
             println!("Updated description on {card}");
         }
         Cmd::SetResult { card, text } => {
             const START: &str = "<!-- RESULT -->";
             const END: &str = "<!-- /RESULT -->";
             let api = api_handle();
-            let c = find_card(&api, &collection, &card);
-            let card_id = c
-                .get("cardId")
-                .and_then(Value::as_str)
-                .unwrap_or("")
-                .to_string();
+            let c = find_description_card(&api, &collection, &card);
             let desc = checkboxes_to_markdown(
                 c.get("detailedDescription")
                     .and_then(Value::as_str)
@@ -2328,13 +2354,7 @@ fn main() {
             );
             let block = format!("{START}\nResult/evidence:\n{}\n{END}", unescape(&text));
             let updated = place_managed_block(&desc, START, END, &block, false);
-            api.request(
-                "PUT",
-                &format!("/cards/{card_id}"),
-                &md_format(),
-                Some(json!({"detailedDescription": updated})),
-                None,
-            );
+            api.write_description(&c, &updated);
             println!("Updated durable result/evidence on {card}");
         }
         Cmd::Tag { card, add, remove } => {

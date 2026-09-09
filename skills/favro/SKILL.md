@@ -11,7 +11,7 @@ Use the `favro` CLI from `PATH`. Do not expose credentials in commands, output, 
 
 ## Start
 
-1. Run `favro --version` and require version 0.2.0 or newer. A missing version flag indicates a pre-0.2 binary; do not continue with it. Follow [favro-cli/README.md](favro-cli/README.md) to install or replace the CLI in the current agent environment, then verify PATH resolution again.
+1. Run `favro --version` and require version 0.2.1 or newer. A missing version flag indicates a pre-0.2 binary; do not continue with it. Follow [favro-cli/README.md](favro-cli/README.md) to install or replace the CLI in the current agent environment, then verify PATH resolution again.
 2. Locate `.favro/project.toml`: explicit `--config`, `FAVRO_PROJECT_CONFIG`, current directory, then parents.
 3. Run `favro check` before project mutations. `favro list-collections` is the minimal authentication/connectivity check.
 4. If no project is configured, ask the user to choose a name and visibility. Offer the repository/directory name or a generated memorable name. Ask whether interview cards should contain one topic or one question. Then run `favro init`; do not create a collection before the user chooses.

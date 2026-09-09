@@ -10,7 +10,7 @@ Rust 1.82 or newer is required.
 
 ```bash
 cargo install --path skills/favro/favro-cli
-favro --version    # must report 0.2.0 or newer
+favro --version    # must report 0.2.1 or newer
 ```
 
 Install and verify the CLI separately in **every** agent/container environment. Home directories and `PATH` binaries are often not shared even when the project workspace is, and a stale pre-0.2 binary fails in confusing ways — which is why the skill's first step is a version check. See [CLI installation details](skills/favro/favro-cli/README.md) for `PATH` shadowing, `--root`, authentication and upgrades.

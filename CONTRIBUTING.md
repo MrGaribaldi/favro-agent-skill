@@ -43,6 +43,12 @@ do it deliberately.
 - **Round-trip Favro's Markdown.** Favro stores `- [ ]` as `☐` and blank lines as
   a leading `↵`. Every whole-description write must go through
   `checkboxes_to_markdown` first, or checkboxes and human ticks are destroyed.
+- **Preserve attachments in description writes.** Use `Api::write_description`
+  with a fresh card snapshot. Favro's Markdown PUT rebuilds uploaded attachments
+  from image nodes, including non-image files. Keep their remote file URLs in
+  the submitted Markdown and verify names/counts after the mutation. See the
+  [live regression test](skills/favro/favro-cli/README.md#live-attachment-regression-test).
+
 
 ## Documentation
 

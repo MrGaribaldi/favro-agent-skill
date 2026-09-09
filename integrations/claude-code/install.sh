@@ -50,6 +50,6 @@ fi
 echo
 echo "Next:"
 echo "  1. cargo install --path $repo_root/skills/favro/favro-cli --force"
-echo "  2. which -a favro && favro --version   # expect 0.2.0 or newer"
+echo "  2. which -a favro && favro --version   # expect 0.2.1 or newer"
 echo "  3. Add \"Bash(favro *)\" to permissions.allow in your settings.json"
 echo "     (see $(dirname "${BASH_SOURCE[0]}")/settings.snippet.json)"
