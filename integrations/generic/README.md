@@ -9,7 +9,7 @@ three things.
 ```bash
 cargo install --path skills/favro/favro-cli --force
 which -a favro
-favro --version    # must report 0.2.0 or newer
+favro --version    # must report 0.2.1 or newer
 ```
 
 Do this in **every** environment the agent runs in. Containers and CI images

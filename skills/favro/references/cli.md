@@ -75,6 +75,16 @@ favro attach --card <id> --file docs/report.md
 
 The CLI enforces Favro's 10 MiB attachment limit, infers common MIME types, percent-encodes filenames, and verifies the uploaded attachment.
 
+Version 0.2.1 preserves uploaded files when `set-desc`, `set-notes`, `set-result`,
+or `set-todo` writes a description. It reads current attachment metadata, includes
+the files in the same Markdown update, then re-reads the card and fails loudly if
+any attachment name/count is missing. No local originals or re-upload are needed.
+Malformed attachment metadata stops the write before mutation. Archive and
+move-board also verify attachments; move-board checks the destination before
+archiving the source instances. Whole-description writes are read/modify/write,
+so avoid concurrent description/attachment edits to the same card.
+
+
 ## Markdown round trips
 
 Use plain double-quoted `\n`/`\t`; the CLI expands them. Favro returns native checkbox tasks as `☐`/`☑` and blank lines with `↵`; whole-description commands normalize these. Numbered Markdown lists lose their numbers, so use explicit `Q1.`, `Q2.` labels. Avoid nesting.

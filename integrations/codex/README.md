@@ -10,7 +10,7 @@ checked out (or vendored as a submodule) and reference the skill from there.
 ```bash
 cargo install --path skills/favro/favro-cli --force
 which -a favro
-favro --version    # must report 0.2.0 or newer
+favro --version    # must report 0.2.1 or newer
 ```
 
 Then add the contents of [`AGENTS.snippet.md`](AGENTS.snippet.md) to your
