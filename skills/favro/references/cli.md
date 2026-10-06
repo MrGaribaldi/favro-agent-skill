@@ -22,7 +22,7 @@ favro list --board product --lane Ready
 ```bash
 favro add --board product --title "Validate handover" --template work --type Task
 favro add --board backend --title "Reject invalid session" --template code --type Bug
-favro move --card <cardCommonId> --lane "In Progress"
+favro move --card '#123' --lane "In Progress"
 favro set-result --card <id> --text "Decision: ...\nArtifact: docs/decision-12.md"
 favro priority --card <id> --value High
 favro priority --card <id> --value Critical --reason "Production data loss"
@@ -32,7 +32,7 @@ favro tag --card <id> --add type:decision
 favro depend --card <A> --on <B>
 ```
 
-Card IDs printed in brackets are `cardCommonId`. The CLI resolves Favro's per-board `cardId` internally. With `--role`, new cards are assigned to that role's configured Favro account. When a Priority field is configured, new cards start at Normal.
+Every `--card` option accepts the human number as `123` or `#123`, or the hexadecimal `cardCommonId` printed in brackets by `add`, `list`, `overview`, and `review-queue`. The CLI resolves these to Favro's canonical `cardCommonId` and per-board `cardId` before reading or mutating anything. With `--role`, new cards are assigned to that role's configured Favro account. When a Priority field is configured, new cards start at Normal.
 
 ## Human actions
 
