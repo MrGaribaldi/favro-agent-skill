@@ -30,9 +30,25 @@ favro complexity --card <id> --value 4
 favro assign --card <id> --add owner --remove product
 favro tag --card <id> --add type:decision
 favro depend --card <A> --on <B>
+favro depend --card <A> --on <B> --remove
+favro depend --card <A> --on <B> --before
+favro depend --card <A> --on <B> --before --remove
+favro deps --card <A>
+favro deps --card <A> --json
 ```
 
 Every `--card` option accepts the human number as `123` or `#123`, or the hexadecimal `cardCommonId` printed in brackets by `add`, `list`, `overview`, and `review-queue`. The CLI resolves these to Favro's canonical `cardCommonId` and per-board `cardId` before reading or mutating anything. With `--role`, new cards are assigned to that role's configured Favro account. When a Priority field is configured, new cards start at Normal.
+
+`depend --card A --on B` means B must finish first. `--before` means A must
+finish first, and selects the same direction with `--remove`. Both references
+accept sequential numbers or `cardCommonId` and resolve within the selected
+collection. Removal checks for that exact per-board card and direction, calls
+Favro's documented [delete-dependency endpoint](https://favro.com/developer/#delete-a-card-dependency)
+(`DELETE /api/v1/cards/:cardId/dependencies/:dependencyCardId`), then confirms the
+link is gone. A missing link (including a second removal or the wrong direction)
+fails with `No dependency to remove` and a non-zero exit; it never reports success.
+Success prints `Dependency removed:` followed by the same relationship wording
+as `Dependency set:`. `deps --json` prints the raw dependency entries.
 
 ## Human actions
 
