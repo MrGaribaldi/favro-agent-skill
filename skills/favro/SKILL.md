@@ -47,6 +47,8 @@ Read [references/workflow.md](references/workflow.md) before designing a new pro
 favro check
 favro add --board product --title "Validate handover need" --template work --type Task
 favro move --card <id> --lane "In Progress"
+favro depend --card <A> --on <B>
+favro depend --card <A> --on <B> --remove
 favro set-todo --card <id> --participant owner --item "Answer the handover questions"
 favro set-todo --card <id> --participant owner --blocked --item "Choose which conflicting policy controls"
 favro set-result --card <id> --text "Interview synthesis: docs/research/handover.md"
@@ -55,6 +57,10 @@ favro move --card <id> --lane Done
 favro review-queue
 favro overview
 ```
+
+`depend` makes A depend on B; `--before` flips the direction for both adding and
+removing. Removal fails if the dependency in that direction is missing. Use
+`favro deps --card <A>` to inspect the links.
 
 Use `--role <role-key>` or `FAVRO_ROLE` whenever a project defines multiple roles; it selects the immutable comment prefix and credential profile. Read [references/cli.md](references/cli.md) for commands, Markdown round-trip constraints, attachments, tags, dependencies, and troubleshooting.
 

@@ -298,6 +298,9 @@ enum Cmd {
         /// Flip direction: --card must finish before --on (i.e. --card is the prerequisite).
         #[arg(long)]
         before: bool,
+        /// Remove the dependency in the selected direction; fail if it is missing.
+        #[arg(long)]
+        remove: bool,
     },
     /// List a card's dependencies.
     Deps {
@@ -1227,6 +1230,19 @@ fn find_card(api: &Api, collection: &str, card_reference: &str) -> Value {
     let cards = card_instances(api, card_reference);
     select_card_instance(cards, &selected_widgets, card_reference, collection)
         .unwrap_or_else(|error| die(error))
+}
+
+/// Match the resolved per-board cardId and direction, never a different instance
+/// of the same common card. Refuse malformed responses before a deletion.
+fn has_dependency(body: &Value, target_id: &str, is_before: bool) -> Result<bool, String> {
+    let deps = body
+        .get("dependencies")
+        .and_then(Value::as_array)
+        .ok_or("Favro returned no dependency list; removal cannot be verified.")?;
+    Ok(deps.iter().any(|dependency| {
+        dependency.get("cardId").and_then(Value::as_str) == Some(target_id)
+            && dependency.get("isBefore").and_then(Value::as_bool) == Some(is_before)
+    }))
 }
 
 /// Get a fresh snapshot of the exact instance, rather than relying on paginated
@@ -2642,7 +2658,12 @@ fn main() {
             );
             println!("Tagged {card}  +{add:?} -{remove:?}");
         }
-        Cmd::Depend { card, on, before } => {
+        Cmd::Depend {
+            card,
+            on,
+            before,
+            remove,
+        } => {
             let api = api_handle();
             let a_id = find_card(&api, &collection, &card)
                 .get("cardId")
@@ -2656,17 +2677,40 @@ fn main() {
                 .to_string();
             // isBefore=true means the --on card must complete before --card (default).
             let is_before = !before;
-            api.request(
-                "POST",
-                &format!("/cards/{a_id}/dependencies"),
-                &[],
-                Some(json!({"dependencies": [{"cardId": b_id, "isBefore": is_before}]})),
-                None,
-            );
-            if before {
-                println!("Dependency set: {card} must finish before {on}.");
+            let path = format!("/cards/{a_id}/dependencies");
+            let action = if remove {
+                let (body, _) = api.request("GET", &path, &[], None, None);
+                if !has_dependency(&body, &b_id, is_before).unwrap_or_else(|error| die(error)) {
+                    let direction = if before {
+                        format!("{card} must finish before {on}")
+                    } else {
+                        format!("{card} depends on {on}")
+                    };
+                    die(format!("No dependency to remove: {direction}."));
+                }
+                // Official API: DELETE /cards/:cardId/dependencies/:dependencyCardId.
+                // The endpoint has no direction parameter; check --before above
+                // before addressing this concrete per-board dependency.
+                api.request("DELETE", &format!("{path}/{b_id}"), &[], None, None);
+                let (body, _) = api.request("GET", &path, &[], None, None);
+                if has_dependency(&body, &b_id, is_before).unwrap_or_else(|error| die(error)) {
+                    die("Dependency still exists after removal; Favro did not confirm the change.");
+                }
+                "removed"
             } else {
-                println!("Dependency set: {card} depends on {on} ({on} must finish first).");
+                api.request(
+                    "POST",
+                    &path,
+                    &[],
+                    Some(json!({"dependencies": [{"cardId": b_id, "isBefore": is_before}]})),
+                    None,
+                );
+                "set"
+            };
+            if before {
+                println!("Dependency {action}: {card} must finish before {on}.");
+            } else {
+                println!("Dependency {action}: {card} depends on {on} ({on} must finish first).");
             }
         }
         Cmd::Deps { card, json } => {
@@ -3018,9 +3062,9 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::{
-        card_reference_query, checkboxes_to_markdown, collection_cache, infer_mime_type,
-        migrate_legacy_collection_cache, percent_encode_query_component, place_managed_block,
-        select_card_instance, truncate_utf8, unescape, Cli,
+        card_reference_query, checkboxes_to_markdown, collection_cache, has_dependency,
+        infer_mime_type, migrate_legacy_collection_cache, percent_encode_query_component,
+        place_managed_block, select_card_instance, truncate_utf8, unescape, Cli, Cmd,
     };
     use clap::Parser;
     use serde_json::json;
@@ -3060,6 +3104,60 @@ mod tests {
         let error = card_reference_query("#not-a-number").unwrap_err();
         assert!(error.contains("Invalid card reference"));
         assert!(card_reference_query("").is_err());
+    }
+
+    #[test]
+    fn dependency_removal_matches_direction_and_exact_board_instance() {
+        let body = json!({"dependencies": [
+            {"cardId": "target", "cardCommonId": "common", "isBefore": true},
+            {"cardId": "other-instance", "cardCommonId": "common", "isBefore": false}
+        ]});
+        assert!(has_dependency(&body, "target", true).unwrap());
+        assert!(!has_dependency(&body, "target", false).unwrap());
+        assert!(has_dependency(&body, "other-instance", false).unwrap());
+        assert!(!has_dependency(&body, "missing", true).unwrap());
+
+        let both = json!({"dependencies": [
+            {"cardId": "target", "isBefore": true},
+            {"cardId": "target", "isBefore": false}
+        ]});
+        assert!(has_dependency(&both, "target", true).unwrap());
+        assert!(has_dependency(&both, "target", false).unwrap());
+        assert!(!has_dependency(&json!({"dependencies": []}), "target", true).unwrap());
+        assert!(has_dependency(&json!({}), "target", true).is_err());
+    }
+
+    #[test]
+    fn depend_remove_preserves_before_and_card_references() {
+        for before in [false, true] {
+            let mut args = vec![
+                "favro",
+                "depend",
+                "--card",
+                "#123",
+                "--on",
+                "common-id",
+                "--remove",
+            ];
+            if before {
+                args.push("--before");
+            }
+            let cli = Cli::try_parse_from(args).unwrap();
+            match cli.cmd {
+                Cmd::Depend {
+                    card,
+                    on,
+                    before: parsed_before,
+                    remove,
+                } => {
+                    assert_eq!(card, "#123");
+                    assert_eq!(on, "common-id");
+                    assert_eq!(parsed_before, before);
+                    assert!(remove);
+                }
+                _ => panic!("Expected depend command"),
+            }
+        }
     }
 
     #[test]

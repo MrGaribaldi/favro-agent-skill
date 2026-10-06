@@ -32,6 +32,26 @@ Run `favro init`, configure the generated project file, then use `favro check`. 
 
 The crate-local `LICENSE` is copied from the repository-root `LICENSE` so Cargo packages include the text. Release review must confirm the two files remain byte-identical.
 
+## Live dependency regression test
+
+Build the test binary with `cargo build --manifest-path skills/favro/favro-cli/Cargo.toml`
+from the repository root, then run:
+
+```bash
+FAVRO_ENV_FILE=/absolute/path/to/favro.env \
+FAVRO_TEST_COLLECTION="Scratch collection" \
+FAVRO_TEST_BOARD="Scratch source" \
+python3 skills/favro/favro-cli/tests/live_dependencies.py
+```
+
+The scratch board must already exist and have a `Backlog` column. The test
+creates two isolated cards and archives both even on failure. It adds, lists,
+removes, confirms removal, and refuses a second removal in each direction.
+It also checks wrong-direction refusals and sequential/cardCommonId references.
+Credentials alone do not enable writes: the test skips unless both scratch
+settings are supplied. Set `FAVRO_TEST_BINARY` to test another binary. Uses only
+Python's standard library.
+
 ## Live attachment regression test
 
 Build the CLI with `cargo build --manifest-path skills/favro/favro-cli/Cargo.toml`
