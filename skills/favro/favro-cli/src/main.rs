@@ -95,7 +95,7 @@ enum Cmd {
         #[arg(long = "type")]
         card_type: Option<String>,
     },
-    /// Move a card to a lane (takes the cardCommonId printed by add/list).
+    /// Move a card to a lane (accepts #3512, 3512, or the cardCommonId printed by add/list).
     Move {
         #[arg(long)]
         card: String,
@@ -150,7 +150,7 @@ enum Cmd {
     },
     /// Upload a local file and attach it to a card.
     Attach {
-        /// cardCommonId printed by add/list.
+        /// Card reference: #3512, 3512, or the cardCommonId printed by add/list.
         #[arg(long)]
         card: String,
         /// Local file to upload (Favro's limit is 10 MiB).
@@ -194,8 +194,8 @@ enum Cmd {
     /// Stale agent comments can mislead later readers. Correcting one in place preserves
     /// the thread while the authorship guard prevents changes to human or other-role text.
     CommentEdit {
-        /// The card the comment is on (cardCommonId). Required — the API has no
-        /// GET /comments/:id, so the lookup must be scoped to a card.
+        /// The card the comment is on (#3512, 3512, or cardCommonId). Required so the authorship check also verifies
+        /// that the comment belongs to the expected card.
         #[arg(long)]
         card: String,
         /// commentId, from `favro comments --card <id> --json`.
@@ -215,7 +215,7 @@ enum Cmd {
     /// where a delete silently removes context someone may have replied to. Use this only
     /// for a comment that should never have been posted at all.
     CommentDelete {
-        /// The card the comment is on (cardCommonId). Required, same reason as comment-edit.
+        /// The card the comment is on (#3512, 3512, or cardCommonId). Required, same reason as comment-edit.
         #[arg(long)]
         card: String,
         /// commentId, from `favro comments --card <id> --json`.
@@ -1115,11 +1115,10 @@ fn is_agent_comment(text: &str) -> bool {
 
 /// Fetch one comment by id, scoped to its card, and refuse unless the selected role wrote it.
 ///
-/// `card` is REQUIRED because the Favro API has no GET /comments/:id — only a list filtered
-/// by cardCommonId. An earlier version took just the commentId and searched every board's
-/// every card, which meant hundreds of API calls and a 120 s timeout on the first real use.
-/// The caller always has the card anyway: the commentId comes from
-/// `favro comments --card <id> --json`.
+/// `card` is REQUIRED so the guard verifies both authorship and card association. An earlier
+/// version took just the commentId and searched every board's every card, which meant hundreds
+/// of API calls and a 120 s timeout on the first real use. The caller already has the card:
+/// the commentId comes from `favro comments --card <id> --json`.
 fn fetch_bot_comment(api: &Api, card: &str, comment_id: &str, verb: &str) -> Value {
     let comments = api.paginate("/comments", &[("cardCommonId", card.to_string())]);
     for c in &comments {
@@ -1153,10 +1152,47 @@ fn api_handle() -> Api {
     Api::new(org)
 }
 
+fn card_reference_query(reference: &str) -> Result<(&'static str, String), String> {
+    let reference = reference.trim();
+    if reference.is_empty() {
+        return Err("Card reference cannot be empty.".into());
+    }
+    if let Some(sequential_id) = reference.strip_prefix('#') {
+        if sequential_id.is_empty() || !sequential_id.chars().all(|c| c.is_ascii_digit()) {
+            return Err(format!(
+                "Invalid card reference {reference:?}; use a cardCommonId, a number such as 3512, or #3512."
+            ));
+        }
+        return Ok(("cardSequentialId", sequential_id.to_string()));
+    }
+    // Favro currently emits 24-character hexadecimal common IDs. Check this before
+    // the all-digit shorthand so a valid (if unusual) numeric common ID stays exact.
+    if reference.len() == 24 && reference.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Ok(("cardCommonId", reference.to_string()));
+    }
+    if reference.chars().all(|c| c.is_ascii_digit()) {
+        return Ok(("cardSequentialId", reference.to_string()));
+    }
+    Ok(("cardCommonId", reference.to_string()))
+}
+
+fn card_instances(api: &Api, reference: &str) -> Vec<Value> {
+    let (parameter, value) = card_reference_query(reference).unwrap_or_else(|error| die(error));
+    api.paginate("/cards", &[(parameter, value)])
+}
+
+fn canonical_card_common_id(card: &Value, reference: &str) -> String {
+    card.get("cardCommonId")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| die(format!("Card {reference:?} has no cardCommonId.")))
+        .to_string()
+}
+
 fn select_card_instance(
     cards: Vec<Value>,
     selected_widgets: &HashSet<String>,
-    card_common_id: &str,
+    card_reference: &str,
     collection: &str,
 ) -> Result<Value, String> {
     let cards: Vec<Value> = cards
@@ -1175,21 +1211,21 @@ fn select_card_instance(
         [card] => Ok((*card).clone()),
         [] if cards.len() == 1 => Ok(cards[0].clone()),
         [] if cards.is_empty() => Err(format!(
-            "Card {card_common_id} was not found in collection {collection:?}."
+            "Card {card_reference} was not found in collection {collection:?}."
         )),
         [] => Err(format!(
-            "Card {card_common_id} has multiple archived instances in collection {collection:?}; unarchive it in Favro or specify a unique active instance."
+            "Card {card_reference} has multiple archived instances in collection {collection:?}; unarchive it in Favro or specify a unique active instance."
         )),
         _ => Err(format!(
-            "Card {card_common_id} has multiple active instances in collection {collection:?}; resolve the duplicate board placement before mutating it."
+            "Card {card_reference} has multiple active instances in collection {collection:?}; resolve the duplicate board placement before mutating it."
         )),
     }
 }
 
-fn find_card(api: &Api, collection: &str, card_common_id: &str) -> Value {
+fn find_card(api: &Api, collection: &str, card_reference: &str) -> Value {
     let selected_widgets = collection_widget_ids(api, collection);
-    let cards = api.paginate("/cards", &[("cardCommonId", card_common_id.to_string())]);
-    select_card_instance(cards, &selected_widgets, card_common_id, collection)
+    let cards = card_instances(api, card_reference);
+    select_card_instance(cards, &selected_widgets, card_reference, collection)
         .unwrap_or_else(|error| die(error))
 }
 
@@ -1210,16 +1246,15 @@ fn find_description_card(api: &Api, collection: &str, card: &str) -> Value {
 fn find_archive_target(
     api: &Api,
     collection: &str,
-    card_common_id: &str,
+    card_reference: &str,
     undo: bool,
     instance: Option<&str>,
 ) -> Value {
     if !undo {
-        return find_card(api, collection, card_common_id);
+        return find_card(api, collection, card_reference);
     }
     let selected_widgets = collection_widget_ids(api, collection);
-    let cards: Vec<Value> = api
-        .paginate("/cards", &[("cardCommonId", card_common_id.to_string())])
+    let cards: Vec<Value> = card_instances(api, card_reference)
         .into_iter()
         .filter(|card| {
             card.get("widgetCommonId")
@@ -1233,7 +1268,7 @@ fn find_archive_target(
             .find(|candidate| candidate.get("cardId").and_then(Value::as_str) == Some(card_id))
             .unwrap_or_else(|| {
                 die(format!(
-                    "Archived instance {card_id:?} was not found for card {card_common_id} in collection {collection:?}."
+                    "Archived instance {card_id:?} was not found for card {card_reference} in collection {collection:?}."
                 ))
             });
         if card.get("archived").and_then(Value::as_bool) != Some(true) {
@@ -1252,10 +1287,10 @@ fn find_archive_target(
             .iter()
             .any(|card| card.get("archived").and_then(Value::as_bool) != Some(true)) =>
         {
-            die(format!("Card {card_common_id} is already active."))
+            die(format!("Card {card_reference} is already active."))
         }
         [] => die(format!(
-            "Card {card_common_id} has no archived instance in collection {collection:?}."
+            "Card {card_reference} has no archived instance in collection {collection:?}."
         )),
         _ => {
             let ids = archived
@@ -1264,7 +1299,7 @@ fn find_archive_target(
                 .collect::<Vec<_>>()
                 .join(", ");
             die(format!(
-                "Card {card_common_id} has several archived instances. Choose one with `favro archive --card {card_common_id} --undo --instance <cardId>`. Candidates: {ids}"
+                "Card {card_reference} has several archived instances. Choose one with `favro archive --card {card_reference} --undo --instance <cardId>`. Candidates: {ids}"
             ))
         }
     }
@@ -1937,6 +1972,7 @@ fn main() {
         } => {
             let api = api_handle();
             let c = find_archive_target(&api, &collection, &card, undo, instance.as_deref());
+            let card_common_id = canonical_card_common_id(&c, &card);
             if !undo {
                 if project
                     .as_ref()
@@ -1964,7 +2000,7 @@ fn main() {
                         message.push_str(&format!("\nHistory: {}", unescape(value)));
                     }
                     api.request("POST", "/comments", &[], Some(json!({
-                        "cardCommonId": card, "comment": format!("{} {message}", author_prefix())
+                        "cardCommonId": card_common_id.clone(), "comment": format!("{} {message}", author_prefix())
                     })), None);
                 }
             }
@@ -1994,7 +2030,7 @@ fn main() {
                 None,
             );
             let after = api
-                .paginate("/cards", &[("cardCommonId", card.clone())])
+                .paginate("/cards", &[("cardCommonId", card_common_id.clone())])
                 .into_iter()
                 .find(|candidate| candidate.get("cardId").and_then(Value::as_str) == Some(&card_id))
                 .unwrap_or_else(|| {
@@ -2014,7 +2050,7 @@ fn main() {
                 ));
             }
             println!(
-                "{} #{seq} {name}  [{card}]",
+                "{} #{seq} {name}  [{card_common_id}]",
                 if undo { "Un-archived" } else { "Archived" }
             );
         }
@@ -2032,6 +2068,7 @@ fn main() {
                 .unwrap_or_else(|| die(format!("Board {board:?} has no lane {lane:?}.")))
                 .to_string();
             let c = find_card(&api, &collection, &card);
+            let card_common_id = canonical_card_common_id(&c, &card);
             let card_id = c
                 .get("cardId")
                 .and_then(|v| v.as_str())
@@ -2054,7 +2091,7 @@ fn main() {
             // instance so the card reads as moved. Comments live on the
             // cardCommonId, so nothing is lost either way.
             let selected_widgets = collection_widget_ids(&api, &collection);
-            let instances = api.paginate("/cards", &[("cardCommonId", card.clone())]);
+            let instances = api.paginate("/cards", &[("cardCommonId", card_common_id.clone())]);
             let target = instances.iter().find(|instance| {
                 instance.get("widgetCommonId").and_then(Value::as_str) == Some(wid.as_str())
                     && instance.get("archived").and_then(Value::as_bool) != Some(true)
@@ -2092,7 +2129,7 @@ fn main() {
             }
             api.verify_attachments(&c, target_id, &[]);
             println!(
-                "Moved #{seq} [{card}] -> {board}/{lane}{}",
+                "Moved #{seq} [{card_common_id}] -> {board}/{lane}{}",
                 if retired > 0 {
                     " (archived the old board's copy)"
                 } else {
@@ -2102,6 +2139,8 @@ fn main() {
         }
         Cmd::Comment { card, text, raw } => {
             let api = api_handle();
+            let selected = find_card(&api, &collection, &card);
+            let card_common_id = canonical_card_common_id(&selected, &card);
             let text = unescape(&text);
             let body = if raw {
                 text
@@ -2112,7 +2151,7 @@ fn main() {
                 "POST",
                 "/comments",
                 &[],
-                Some(json!({"cardCommonId": card, "comment": body})),
+                Some(json!({"cardCommonId": card_common_id, "comment": body})),
                 None,
             );
             println!("Commented on {card}");
@@ -2364,7 +2403,9 @@ fn main() {
             raw,
         } => {
             let api = api_handle();
-            fetch_bot_comment(&api, &card, &comment, "edit");
+            let selected = find_card(&api, &collection, &card);
+            let card_common_id = canonical_card_common_id(&selected, &card);
+            fetch_bot_comment(&api, &card_common_id, &comment, "edit");
             let text = unescape(&text);
             let body = if raw {
                 text
@@ -2382,7 +2423,9 @@ fn main() {
         }
         Cmd::CommentDelete { card, comment } => {
             let api = api_handle();
-            fetch_bot_comment(&api, &card, &comment, "delete");
+            let selected = find_card(&api, &collection, &card);
+            let card_common_id = canonical_card_common_id(&selected, &card);
+            fetch_bot_comment(&api, &card_common_id, &comment, "delete");
             api.request("DELETE", &format!("/comments/{comment}"), &[], None, None);
             println!("Deleted comment {comment} from card {card}");
         }
@@ -2687,7 +2730,9 @@ fn main() {
         }
         Cmd::Comments { card, json } => {
             let api = api_handle();
-            let comments = api.paginate("/comments", &[("cardCommonId", card.clone())]);
+            let selected = find_card(&api, &collection, &card);
+            let card_common_id = canonical_card_common_id(&selected, &card);
+            let comments = api.paginate("/comments", &[("cardCommonId", card_common_id)]);
             if json {
                 println!("{}", serde_json::to_string_pretty(&comments).unwrap());
             } else if comments.is_empty() {
@@ -2905,7 +2950,9 @@ fn main() {
             let field = find_shared_field(&api, spec);
             let field_id = shared_field_id(&field);
             let item_id = field_item_id(&field, &value);
-            let card_id = find_card(&api, &collection, &card)
+            let selected = find_card(&api, &collection, &card);
+            let card_common_id = canonical_card_common_id(&selected, &card);
+            let card_id = selected
                 .get("cardId")
                 .and_then(Value::as_str)
                 .unwrap_or("")
@@ -2921,7 +2968,7 @@ fn main() {
             );
             if let Some(reason) = reason {
                 api.request("POST", "/comments", &[], Some(json!({
-                    "cardCommonId": card,
+                    "cardCommonId": card_common_id,
                     "comment": format!("{} Priority set to {value}: {}", author_prefix(), unescape(&reason))
                 })), None);
             }
@@ -2971,9 +3018,9 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::{
-        checkboxes_to_markdown, collection_cache, infer_mime_type, migrate_legacy_collection_cache,
-        percent_encode_query_component, place_managed_block, select_card_instance, truncate_utf8,
-        unescape, Cli,
+        card_reference_query, checkboxes_to_markdown, collection_cache, infer_mime_type,
+        migrate_legacy_collection_cache, percent_encode_query_component, place_managed_block,
+        select_card_instance, truncate_utf8, unescape, Cli,
     };
     use clap::Parser;
     use serde_json::json;
@@ -2986,6 +3033,33 @@ mod tests {
             "review%20%231%2B.md"
         );
         assert_eq!(percent_encode_query_component("blå.md"), "bl%C3%A5.md");
+    }
+
+    #[test]
+    fn card_references_choose_the_documented_filter() {
+        assert_eq!(
+            card_reference_query("9202258865f3df3894331c14").unwrap(),
+            ("cardCommonId", "9202258865f3df3894331c14".into())
+        );
+        assert_eq!(
+            card_reference_query("123456789012345678901234").unwrap(),
+            ("cardCommonId", "123456789012345678901234".into())
+        );
+        assert_eq!(
+            card_reference_query("3512").unwrap(),
+            ("cardSequentialId", "3512".into())
+        );
+        assert_eq!(
+            card_reference_query("#3512").unwrap(),
+            ("cardSequentialId", "3512".into())
+        );
+    }
+
+    #[test]
+    fn malformed_hash_prefixed_card_reference_is_rejected_locally() {
+        let error = card_reference_query("#not-a-number").unwrap_err();
+        assert!(error.contains("Invalid card reference"));
+        assert!(card_reference_query("").is_err());
     }
 
     #[test]

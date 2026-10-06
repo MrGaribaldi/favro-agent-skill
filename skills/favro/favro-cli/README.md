@@ -18,7 +18,7 @@ which -a favro
 favro --version
 ```
 
-`which -a favro` should show the intended installation first; `favro --version` must report 0.2.2 or newer.
+`which -a favro` should show the intended installation first; `favro --version` must report 0.2.3 or newer.
 
 When working from the repository root:
 
