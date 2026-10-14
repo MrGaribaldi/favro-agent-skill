@@ -61,7 +61,10 @@ class LiveAttachments(unittest.TestCase):
         return result.stderr
 
     def card(self, common_id):
-        return json.loads(self.cli("get", "--card", common_id))
+        # Mutation checks inspect native task glyphs and compare descriptions
+        # without the expiring signed URLs embedded in Markdown file nodes.
+        return json.loads(self.cli("get", "--card", common_id,
+                                   "--description-format", "plaintext"))
 
     def test_attachment_survives_each_update(self):
         cases = [
