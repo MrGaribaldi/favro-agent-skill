@@ -13,6 +13,7 @@
 //! misleading `403 Access denied`. `move` therefore resolves the cardId first.
 
 mod attachments;
+mod comment_poll;
 mod config;
 
 use base64::Engine;
@@ -237,6 +238,16 @@ enum Cmd {
         /// Print the raw comment JSON instead of formatted lines.
         #[arg(long)]
         json: bool,
+    },
+    /// Poll collection comment threads as JSON, using cached counts by default.
+    PollComments {
+        /// Read a previous next_cache checkpoint; missing files start a fresh poll.
+        /// The CLI returns next_cache but never overwrites this file.
+        #[arg(long)]
+        cache: Option<PathBuf>,
+        /// Fetch every thread, including unchanged counts, to catch edits/replacements.
+        #[arg(long)]
+        full_comments: bool,
     },
     /// Set/replace the maintained automation Notes block in the card body.
     SetNotes {
@@ -2767,6 +2778,68 @@ fn main() {
                     println!("blocks {label}  (this card is a prerequisite)");
                 }
             }
+        }
+        Cmd::PollComments {
+            cache,
+            full_comments,
+        } => {
+            let api = api_handle();
+            let mut state = read_state();
+            let collection_id = resolve_collection(&api, &mut state, &collection, false);
+            let previous = match cache.filter(|path| path.exists()) {
+                Some(path) => {
+                    let contents = std::fs::read_to_string(&path)
+                        .unwrap_or_else(|_| die("Cannot read comment cache file."));
+                    serde_json::from_str::<comment_poll::Cache>(&contents)
+                        .unwrap_or_else(|_| die("Invalid comment cache JSON."))
+                }
+                None => comment_poll::Cache::empty(api.org.clone(), collection_id.clone()),
+            };
+            previous
+                .validate(&api.org, &collection_id)
+                .unwrap_or_else(|error| die(error));
+            let widgets = api.paginate("/widgets", &[("collectionId", collection_id)]);
+            let mut cards = Vec::new();
+            for widget in widgets {
+                if widget.get("archived").and_then(Value::as_bool) == Some(true)
+                    || widget.get("type").and_then(Value::as_str) != Some("board")
+                {
+                    continue;
+                }
+                let wid = widget
+                    .get("widgetCommonId")
+                    .and_then(Value::as_str)
+                    .unwrap_or_else(|| die("Board has no widgetCommonId."));
+                for card in api.paginate("/cards", &[("widgetCommonId", wid.to_string())]) {
+                    if card.get("archived").and_then(Value::as_bool) == Some(true) {
+                        continue;
+                    }
+                    let column_name = widget
+                        .get("columns")
+                        .and_then(Value::as_array)
+                        .and_then(|columns| {
+                            columns
+                                .iter()
+                                .find(|column| column.get("columnId") == card.get("columnId"))
+                        })
+                        .and_then(|column| column.get("name"))
+                        .cloned()
+                        .unwrap_or(Value::Null);
+                    // Return compact metadata, not full descriptions or signed file URLs.
+                    cards.push(json!({
+                        "cardId": card["cardId"], "cardCommonId": card["cardCommonId"],
+                        "sequentialId": card["sequentialId"], "name": card["name"],
+                        "numComments": card["numComments"], "widgetCommonId": wid,
+                        "boardName": widget["name"], "columnName": column_name,
+                    }));
+                }
+            }
+            let result = comment_poll::poll(cards, previous, full_comments, |common_id| {
+                // Discovery already supplied this shared ID: no find_card call.
+                Ok(api.paginate("/comments", &[("cardCommonId", common_id.to_string())]))
+            })
+            .unwrap_or_else(|error| die(error));
+            println!("{}", serde_json::to_string(&result).unwrap());
         }
         Cmd::Get {
             card,

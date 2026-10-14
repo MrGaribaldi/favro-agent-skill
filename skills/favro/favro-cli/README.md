@@ -41,6 +41,19 @@ attachment nodes then become blank lines. Both formats include `attachments`
 metadata. Download the relevant `fileURL` to read the actual file contents.
 Description mutations retain their existing attachment-preserving path.
 
+## Efficient comment polling (0.2.4+)
+
+`favro poll-comments --cache <agent-cache.json>` lists live collection cards once
+and fetches comment threads directly by their discovered common IDs only when
+the comment count changes. Add `--full-comments` to read every thread and check
+edits or add/delete pairs with unchanged counts. JSON output includes `cards`,
+fetched `threads`, `skipped_unchanged`, and `next_cache`.
+
+The cache path is read-only to the CLI. Each consumer saves the returned
+`next_cache` object atomically after processing or durably queuing the threads;
+failed processing keeps the previous checkpoint. Use separate cache files per
+consumer. See [polling details](../references/cli.md#polling-comments).
+
 ## Live dependency regression test
 
 Build the test binary with `cargo build --manifest-path skills/favro/favro-cli/Cargo.toml`

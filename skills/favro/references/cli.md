@@ -70,6 +70,37 @@ fails with `No dependency to remove` and a non-zero exit; it never reports succe
 Success prints `Dependency removed:` followed by the same relationship wording
 as `Dependency set:`. `deps --json` prints the raw dependency entries.
 
+## Polling comments
+
+Available in CLI 0.2.4 and newer:
+
+```bash
+favro poll-comments --cache /path/to/agent-comment-cache.json
+favro poll-comments --cache /path/to/agent-comment-cache.json --full-comments
+```
+
+The command scans live boards in the selected collection, retaining card IDs and
+`numComments` from the card listings. Comment requests use those common IDs
+directly, without resolving each card again. Multiple board instances share one
+thread and are fetched once. A normal poll skips threads with unchanged counts;
+new empty threads need no comment request. Missing/invalid counts force a read.
+
+Count-based polling deliberately accepts missing comment edits and add/delete
+pairs that leave the same count. `--full-comments` reads every thread regardless
+of counts, including empty threads. It returns full snapshots, so the consumer
+must compare comment IDs/text to identify new or edited comments. This command
+tracks comments, not description-only changes.
+
+JSON output contains compact `cards` metadata, fetched `threads` (each with
+`cardCommonId` and `comments`), `skipped_unchanged`, and `next_cache`. A missing
+cache starts a first poll; caches are versioned and scoped to organization and
+collection. Use a separate cache per consumer. The CLI never overwrites the
+cache: process or durably queue the returned threads, then atomically save only
+the `next_cache` object to the cache path. If processing or polling fails, keep
+the previous cache so updates can be retried. Do not save the entire response as
+the cache. The first poll initializes counts; later unchanged polls need only
+board discovery/card-list requests (plus pagination), with no comment reads.
+
 ## Human actions
 
 ```bash

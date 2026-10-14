@@ -45,6 +45,8 @@ Read [references/workflow.md](references/workflow.md) before designing a new pro
 
 Read cards with `favro get --card <id>`, which requests Markdown by default so attachment references and dividers remain visible. Inspect `attachments` and download relevant `fileURL` targets when their contents are needed; a description link alone does not include the file contents. See [references/cli.md](references/cli.md#reading-cards) for format options and older CLI behavior.
 
+For recurring comment checks, use `favro poll-comments --cache <agent-cache.json>` (CLI 0.2.4+). It reuses discovered card IDs and skips threads with unchanged comment counts. This accepts missing edits and add/delete pairs that keep the same count; use `--full-comments` when those must be checked. Each consumer keeps its own cache and saves the returned `next_cache` only after processing or durably queuing the returned threads. See [references/cli.md](references/cli.md#polling-comments).
+
 ```bash
 favro check
 favro add --board product --title "Validate handover need" --template work --type Task
