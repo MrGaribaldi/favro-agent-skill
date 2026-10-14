@@ -43,6 +43,8 @@ Read [references/workflow.md](references/workflow.md) before designing a new pro
 
 ## Common operations
 
+Read cards with `favro get --card <id>`, which requests Markdown by default so attachment references and dividers remain visible. Inspect `attachments` and download relevant `fileURL` targets when their contents are needed; a description link alone does not include the file contents. See [references/cli.md](references/cli.md#reading-cards) for format options and older CLI behavior.
+
 ```bash
 favro check
 favro add --board product --title "Validate handover need" --template work --type Task
