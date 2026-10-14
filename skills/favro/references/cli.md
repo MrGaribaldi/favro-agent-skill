@@ -19,6 +19,26 @@ favro list --board product --lane Ready
 
 ## Cards and metadata
 
+### Reading cards
+
+```bash
+favro get --card <id>                                 # Markdown description (default)
+favro get --card <id> --description-format plaintext  # Explicit text-only description
+```
+
+`get` explicitly requests `descriptionFormat=markdown` so `detailedDescription`
+retains attachment references and structural formatting such as dividers. Favro
+represents uploaded files, including non-image files, as `![filename](URL)` nodes.
+Plaintext turns these nodes into blank lines and loses structural formatting.
+Both formats return the separate `attachments` array with names and `fileURL`
+download links. Download relevant files to read their contents; neither response
+embeds those contents. Download links expire, so retrieve the card again if needed.
+
+Older CLI versions without `--description-format` return plaintext by default;
+upgrade before relying on description formatting, and inspect `attachments`
+regardless of the description. This read default does not change the existing
+attachment-preserving description write path.
+
 ```bash
 favro add --board product --title "Validate handover" --template work --type Task
 favro add --board backend --title "Reject invalid session" --template code --type Bug

@@ -222,10 +222,13 @@ enum Cmd {
         #[arg(long)]
         comment: String,
     },
-    /// Print a card as JSON.
+    /// Print a card as JSON, with its description in Markdown by default.
     Get {
         #[arg(long)]
         card: String,
+        /// Plaintext hides attachment nodes and structural formatting.
+        #[arg(long, default_value = "markdown", value_parser = ["markdown", "plaintext"])]
+        description_format: String,
     },
     /// Read the comments on a card (oldest first).
     Comments {
@@ -2765,12 +2768,23 @@ fn main() {
                 }
             }
         }
-        Cmd::Get { card } => {
+        Cmd::Get {
+            card,
+            description_format,
+        } => {
             let api = api_handle();
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&find_card(&api, &collection, &card)).unwrap()
+            let selected = find_card(&api, &collection, &card);
+            let card_id = selected["cardId"]
+                .as_str()
+                .unwrap_or_else(|| die("Card has no cardId; cannot retrieve its description."));
+            let (snapshot, _) = api.request(
+                "GET",
+                &format!("/cards/{card_id}"),
+                &[("descriptionFormat", description_format)],
+                None,
+                None,
             );
+            println!("{}", serde_json::to_string_pretty(&snapshot).unwrap());
         }
         Cmd::Comments { card, json } => {
             let api = api_handle();
@@ -3069,6 +3083,41 @@ mod tests {
     use clap::Parser;
     use serde_json::json;
     use std::collections::HashSet;
+
+    #[test]
+    fn get_defaults_to_markdown_and_allows_explicit_plaintext() {
+        for (args, expected) in [
+            (vec!["favro", "get", "--card", "3417"], "markdown"),
+            (
+                vec![
+                    "favro",
+                    "get",
+                    "--card",
+                    "3417",
+                    "--description-format",
+                    "plaintext",
+                ],
+                "plaintext",
+            ),
+        ] {
+            let cli = Cli::try_parse_from(args).unwrap();
+            match cli.cmd {
+                Cmd::Get {
+                    description_format, ..
+                } => assert_eq!(description_format, expected),
+                _ => panic!("expected get command"),
+            }
+        }
+        assert!(Cli::try_parse_from([
+            "favro",
+            "get",
+            "--card",
+            "3417",
+            "--description-format",
+            "html"
+        ])
+        .is_err());
+    }
 
     #[test]
     fn query_components_are_percent_encoded() {

@@ -32,6 +32,15 @@ Run `favro init`, configure the generated project file, then use `favro check`. 
 
 The crate-local `LICENSE` is copied from the repository-root `LICENSE` so Cargo packages include the text. Release review must confirm the two files remain byte-identical.
 
+## Reading cards
+
+`favro get --card <id>` returns JSON with a Markdown `detailedDescription` by
+default. This keeps attachment references (`![filename](URL)`) and dividers
+visible. Use `--description-format plaintext` when text-only output is needed;
+attachment nodes then become blank lines. Both formats include `attachments`
+metadata. Download the relevant `fileURL` to read the actual file contents.
+Description mutations retain their existing attachment-preserving path.
+
 ## Live dependency regression test
 
 Build the test binary with `cargo build --manifest-path skills/favro/favro-cli/Cargo.toml`
