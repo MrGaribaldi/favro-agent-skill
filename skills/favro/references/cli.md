@@ -103,6 +103,8 @@ board discovery/card-list requests (plus pagination), with no comment reads.
 
 ## Human actions
 
+When a human action board is designated, first follow [Human action cards](human-actions.md). `set-todo` alone does not create that separate card or track its archival. `poll-comments` only watches live cards and comment counts: callers must separately check tracked action cards for `archived: true`, including unchanged-comment cases.
+
 ```bash
 favro set-todo --card <id> --participant owner --item "Answer Q1" --note "Why this matters: ..."
 favro set-todo --card <id> --participant owner --blocked --item "Grant access to dataset X"

@@ -21,7 +21,7 @@ Use namespaced tags so dimensions remain clear: `type:decision`, `domain:gdpr`, 
 
 ## Human handoffs
 
-Every human action belongs in the maintained `👤 Needs you` checklist, one imperative/self-contained checkbox per action. Context belongs below the checklist. Assign the relevant configured participant so the card is visible in their Favro work/notifications.
+For projects with a designated human action board, follow [Human action cards](human-actions.md): put every human task on that board, link it both ways to its owning work card, tag the need and assign the human. An action card is a linked request, not a second implementation card. The owning role and substantive work stay on the source card. Keep its `👤 Needs you` checklist synchronized with the request. Without an action board, maintain the checklist directly on the source card.
 
 `set-todo` moves expected input to Waiting; pass `--blocked` for an unexpected impediment. Clearing the checklist removes the human assignment and may restore the selected role assignment. Then deliberately move the card to Ready or In Progress.
 
@@ -56,6 +56,8 @@ Before Done:
 A result can be a document, research synthesis, decision record, attachment, test output, deployed artifact, or Git commit. Git is one evidence system, not the universal completion mechanism.
 
 ## Archival and history
+
+If the human chose archive-to-complete on their action board, treat their archived action card as a completed human request under [Human action cards](human-actions.md). That exception does not declare the related implementation complete or require the human to write an archive reason.
 
 Keep live and Done views useful. Work that is rejected, obsolete, or superseded should record its outcome and then be archived. `Not prioritized` remains in Backlog rather than being archived.
 
