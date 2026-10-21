@@ -18,7 +18,7 @@ which -a favro
 favro --version
 ```
 
-`which -a favro` should show the intended installation first; `favro --version` must report 0.2.3 or newer.
+`which -a favro` should show the intended installation first; `favro --version` must report 0.2.5 or newer.
 
 When working from the repository root:
 
@@ -123,27 +123,29 @@ After upgrading a consuming project's CLI to 0.2.1, its issue #1 â€œattach lastâ
 workaround can be removed. This repository does not contain those downstream
 project files.
 
-### Issue #2: `attach --replace` and `detach` (2026-09-11)
+### Document removal and revisions (#3, #11; verified 2026-10-21)
 
-0.2.1's preservation fix rebuilds a card's attachment list from the
-`![name](<fileURL>)` nodes in the same PUT. The inverse follows directly:
-leaving a node out removes that attachment. `attach --replace` uploads the new
-file, then rewrites the description with the outgoing node omitted; `detach`
-does the same without an upload. Both resolve the outgoing attachment by
-`fileURL`, not by name (names are not unique), and refuse -- without mutating
-the card -- when `--name` matches more than one attachment and no
-`--replace-url`/`--url` picks one, or when any attachment on the card cannot be
-safely represented in Markdown. The loss-guard (`attachments::verify`) is told
-which removal is intentional, so it still fails loudly on anything else.
+Live tests on newly created cards in the existing private scratch collection
+confirm that omitting an uploaded file's image node from a Markdown PUT removes
+it from the card's native attachment list. No separate attachment deletion API
+is needed to clean up a card. Ordinary `set-desc` writes preserve attachments;
+use `favro attachment-delete --card <id> --name old-report.md` (alias `detach`)
+for intentional removal. Other files and native checkbox ticks are preserved. The removed file's existing
+download URL still returned HTTP 200 in the probe: card cleanup does not promise
+storage deletion or immediate revocation of signed download links.
 
-This has not been confirmed against a live card. The mechanism is the direct
-inverse of the confirmed preservation behavior above, but the issue that
-proposed it explicitly called for a probe before implementing, because the
-consequence is destructive: on a scratch card with two attachments, PUT with
-one image node omitted, then re-read and check whether the omitted one is
-gone from `attachments`, and whether it is unlinked or actually deleted from
-Favro's storage. No credentials were available in this environment to run
-that probe. Until it's run, treat `detach`'s and `attach --replace`'s "the old
-file was unlinked from this card" wording as the safer of the two readings,
-not a confirmed fact -- and run `tests/live_attachments.py` against a scratch
-board before relying on either command against a card that matters.
+Use `favro attach --card <id> --file report.md --replace` to revise documents
+under stable filenames. It confirms the new upload before removing the old one.
+Plain `attach` warns when the filename already exists. Duplicate filenames
+require `--url <fileURL>` for deletion or `--replace-url <fileURL>` for replacement;
+only that copy is removed, and other same-named files remain for explicit cleanup.
+
+Favro rotates signed URL query parameters between reads. Version 0.2.5 compares
+the upload's storage URL without the signature for selection, omission and
+post-write verification; full-URL comparisons could leave the old revision on
+the card or falsely report success. Upload verification also checks the new
+file's identity, rather than accepting any existing file with the same name.
+
+The live test runner previously overrode `unittest.TestCase.run`, preventing the
+suite from executing. It now uses `invoke` for CLI calls, normalizes signatures
+in assertions and downloads replacement bytes to verify the actual new content.

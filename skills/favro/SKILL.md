@@ -11,7 +11,7 @@ Use the `favro` CLI from `PATH`. Do not expose credentials in commands, output, 
 
 ## Start
 
-1. Run `favro --version` and require version 0.2.1 or newer. A missing version flag indicates a pre-0.2 binary; do not continue with it. Follow [favro-cli/README.md](favro-cli/README.md) to install or replace the CLI in the current agent environment, then verify PATH resolution again.
+1. Run `favro --version` and require version 0.2.5 or newer. A missing version flag indicates a pre-0.2 binary; do not continue with it. Follow [favro-cli/README.md](favro-cli/README.md) to install or replace the CLI in the current agent environment, then verify PATH resolution again.
 2. Locate `.favro/project.toml`: explicit `--config`, `FAVRO_PROJECT_CONFIG`, current directory, then parents.
 3. Run `favro check` before project mutations. `favro list-collections` is the minimal authentication/connectivity check.
 4. If no project is configured, ask the user to choose a name and visibility. Offer the repository/directory name or a generated memorable name. Ask whether interview cards should contain one topic or one question. Then run `favro init`; do not create a collection before the user chooses.
@@ -55,12 +55,16 @@ favro depend --card <A> --on <B>
 favro depend --card <A> --on <B> --remove
 favro set-todo --card <id> --participant owner --item "Answer the handover questions"
 favro set-todo --card <id> --participant owner --blocked --item "Choose which conflicting policy controls"
+favro attach --card <id> --file docs/report.md --replace
+favro attachment-delete --card <id> --name obsolete-report.md
 favro set-result --card <id> --text "Interview synthesis: docs/research/handover.md"
 favro move --card <id> --lane Review
 favro move --card <id> --lane Done
 favro review-queue
 favro overview
 ```
+
+Keep one current attachment per document: use a stable filename and `attach --replace` for revisions. Remove superseded files with `attachment-delete` (alias of `detach`); inspect `attachments` first and pass `--url <fileURL>` when filenames are duplicated. `--replace-url <fileURL>` selects an old copy for replacement. Remove other obsolete copies explicitly. Ordinary description edits preserve attachments, so deleting a link with `set-desc` is insufficient. Removal unlinks the file from the card; it does not promise deletion from storage.
 
 `depend` makes A depend on B; `--before` flips the direction for both adding and
 removing. Removal fails if the dependency in that direction is missing. Use

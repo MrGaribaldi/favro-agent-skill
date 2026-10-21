@@ -140,22 +140,30 @@ Prefer retargeting when the requirement remains valid. Archive only when its sub
 favro attach --card <id> --file docs/report.md
 favro attach --card <id> --file docs/report.md --replace          # revise a file under the same name
 favro attach --card <id> --file docs/report.md --name report.md --replace --replace-url <fileURL>  # ambiguous name
-favro detach --card <id> --name report.md                         # remove an attachment outright
+favro attachment-delete --card <id> --name report.md              # remove an obsolete document
+favro detach --card <id> --name report.md                         # same command
 favro detach --card <id> --name report.md --url <fileURL>          # ambiguous name
 ```
 
 The CLI enforces Favro's 10 MiB attachment limit, infers common MIME types, percent-encodes filenames, and verifies the uploaded attachment.
 
-Plain `attach` only ever adds -- re-uploading a revised file under the same name
-leaves two attachments with identical names and no way to tell which is current.
-`--replace` uploads the new bytes first (the card is never without the file), then
-removes whichever pre-existing attachment(s) shared that filename, leaving exactly
-one. `detach` removes an attachment outright without uploading anything. Both
-identify the outgoing attachment by `fileURL`, not by name (names are not unique in
-Favro), and refuse -- without mutating the card -- when `--name` matches more than
-one attachment and `--replace-url`/`--url` doesn't pick one. This unlinks the file
-from the card; whether Favro's storage also deletes the underlying bytes is not
-established (see the favro-cli README's issue #2 note).
+Use stable filenames and `attach --replace` for document revisions. Plain `attach`
+adds another copy and warns if the filename already exists. Replacement uploads and
+verifies the new file before removing the selected old copy. `attachment-delete`
+(alias of `detach`) removes a document without uploading anything.
+
+Both commands refuse ambiguous names before changing anything: inspect
+`favro get --card <id>` and pass `--url <fileURL>` for removal or
+`--replace-url <fileURL>` for replacement. A targeted replacement preserves other
+same-named copies; remove obsolete copies explicitly rather than guessing which
+revision is current.
+
+Removing an attachment's image node from a Markdown PUT rebuilds the native
+attachment list without that file. The CLI performs this rewrite and verifies
+removal while preserving unrelated files and native task ticks. Ordinary
+`set-desc` writes intentionally preserve all attachments, so removing links from
+that command's text does not delete documents. Card removal does not guarantee
+that Favro deletes the stored bytes or revokes previously issued download URLs.
 
 Version 0.2.1 preserves uploaded files when `set-desc`, `set-notes`, `set-result`,
 or `set-todo` writes a description. It reads current attachment metadata, includes
