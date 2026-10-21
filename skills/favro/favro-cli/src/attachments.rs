@@ -1,6 +1,12 @@
 use serde_json::Value;
 use std::collections::BTreeMap;
 
+/// Favro rotates the signed query string on reads. The storage path identifies
+/// the upload; comparing expiring signatures can preserve a file meant for removal.
+pub fn same_file_url(left: &str, right: &str) -> bool {
+    left.split(['?', '#']).next() == right.split(['?', '#']).next()
+}
+
 /// Count names rather than using a set: two uploads may share a filename.
 fn names(card: &Value) -> Result<BTreeMap<String, usize>, String> {
     let mut names = BTreeMap::new();
@@ -49,7 +55,7 @@ pub fn preserve_in_markdown_except(
             {
                 return Err(format!("Cannot safely represent attachment {name:?} in Markdown. Description was not changed."));
             }
-            if omit.contains(&url) {
+            if omit.iter().any(|omitted| same_file_url(omitted, url)) {
                 continue;
             }
             let mut label = String::new();
@@ -194,5 +200,21 @@ mod tests {
         let card =
             json!({"attachments": [{"name": "evidence.pdf", "fileURL": "javascript:alert(1)"}]});
         assert!(preserve_in_markdown_except(&card, "body", &["javascript:alert(1)"]).is_err());
+    }
+
+    #[test]
+    fn removal_matches_upload_despite_rotating_download_signatures() {
+        let card = json!({"attachments": [
+            {"name": "report.md", "fileURL": "https://example.com/old?signature=fresh"},
+            {"name": "report.md", "fileURL": "https://example.com/new?signature=fresh"}
+        ]});
+        let result = preserve_in_markdown_except(
+            &card,
+            "body",
+            &["https://example.com/old?signature=expired"],
+        )
+        .unwrap();
+        assert!(!result.contains("/old"));
+        assert!(result.contains("/new?signature=fresh"));
     }
 }

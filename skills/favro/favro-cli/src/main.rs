@@ -163,9 +163,9 @@ enum Cmd {
         /// MIME type override (normally inferred from the filename).
         #[arg(long)]
         mime_type: Option<String>,
-        /// Upload first, then remove whichever pre-existing attachment(s) already
-        /// carried this filename, so the card ends up with exactly one. The old
-        /// copy stays on the card until the new one is confirmed uploaded.
+        /// Upload first, then remove the selected pre-existing copy of this filename.
+        /// The old copy stays until the new one is confirmed uploaded. Duplicate
+        /// names require --replace-url; other copies are preserved.
         #[arg(long)]
         replace: bool,
         /// Disambiguates --replace when several existing attachments already share
@@ -174,11 +174,12 @@ enum Cmd {
         #[arg(long)]
         replace_url: Option<String>,
     },
-    /// Remove one attachment from a card, leaving the rest of the description untouched.
+    /// Delete one document/attachment from a card, preserving other files and text.
     ///
     /// Names are not unique in Favro, so a name matching more than one attachment is
     /// refused unless --url picks one. This unlinks the file from the card; whether
     /// Favro also deletes the underlying storage is outside this command's knowledge.
+    #[command(visible_alias = "attachment-delete")]
     Detach {
         #[arg(long)]
         card: String,
@@ -2249,6 +2250,12 @@ fn main() {
                 })
                 .unwrap_or_default();
             let outgoing_url: Option<String> = if !replace {
+                if !same_name.is_empty() {
+                    eprintln!(
+                        "Warning: card {card} already has {} attachment(s) named {filename:?}. This upload adds another revision; use --replace to revise it or detach to remove an old copy.",
+                        same_name.len()
+                    );
+                }
                 None
             } else {
                 match (same_name.as_slice(), &replace_url) {
@@ -2265,7 +2272,8 @@ fn main() {
                     ),
                     (_, Some(url)) => {
                         if !same_name.iter().any(|attachment| {
-                            attachment.get("fileURL").and_then(Value::as_str) == Some(url.as_str())
+                            attachment.get("fileURL").and_then(Value::as_str)
+                                .is_some_and(|actual| attachments::same_file_url(actual, url))
                         }) {
                             die(format!(
                                 "Card {card} has no attachment named {filename:?} with fileURL {url:?}."
@@ -2285,6 +2293,10 @@ fn main() {
                     "Favro accepted the upload but returned an unexpected attachment: {response}"
                 ));
             }
+            let uploaded_url = response
+                .get("fileURL")
+                .and_then(Value::as_str)
+                .unwrap_or_else(|| die("Favro accepted the upload but returned no fileURL; the old copy was not removed."));
             let updated = find_card(&api, &collection, &card);
             let verified = updated
                 .get("attachments")
@@ -2292,6 +2304,12 @@ fn main() {
                 .is_some_and(|attachments| {
                     attachments.iter().any(|attachment| {
                         attachment.get("name").and_then(|value| value.as_str()) == Some(&filename)
+                            && attachment
+                                .get("fileURL")
+                                .and_then(Value::as_str)
+                                .is_some_and(|actual| {
+                                    attachments::same_file_url(actual, uploaded_url)
+                                })
                     })
                 });
             if !verified {
@@ -2299,6 +2317,7 @@ fn main() {
                     "Uploaded {filename}, but it did not appear when card {card} was re-read."
                 ));
             }
+            attachments::verify(&existing, &updated, &[]).unwrap_or_else(|error| die(error));
             match &outgoing_url {
                 None => {
                     println!(
@@ -2340,9 +2359,18 @@ fn main() {
                                 .collect()
                         })
                         .unwrap_or_default();
-                    if remaining.len() != 1 || remaining[0] == Some(outgoing_url.as_str()) {
+                    if remaining.len() != same_name.len()
+                        || remaining
+                            .iter()
+                            .flatten()
+                            .any(|url| attachments::same_file_url(url, outgoing_url))
+                        || !remaining
+                            .iter()
+                            .flatten()
+                            .any(|url| attachments::same_file_url(url, uploaded_url))
+                    {
                         die(format!(
-                            "Replace did not leave exactly one {filename:?} on card {card}; inspect the card before continuing."
+                            "Replace did not remove only the selected copy of {filename:?} on card {card}; inspect the card before continuing."
                         ));
                     }
                     println!(
@@ -2373,7 +2401,8 @@ fn main() {
                 (_, Some(target)) => same_name
                     .iter()
                     .find(|attachment| {
-                        attachment.get("fileURL").and_then(Value::as_str) == Some(target.as_str())
+                        attachment.get("fileURL").and_then(Value::as_str)
+                            .is_some_and(|actual| attachments::same_file_url(actual, target))
                     })
                     .unwrap_or_else(|| {
                         die(format!(
@@ -2410,8 +2439,10 @@ fn main() {
                 .and_then(Value::as_array)
                 .is_some_and(|attachments| {
                     attachments.iter().any(|attachment| {
-                        attachment.get("fileURL").and_then(Value::as_str)
-                            == Some(outgoing_url.as_str())
+                        attachment
+                            .get("fileURL")
+                            .and_then(Value::as_str)
+                            .is_some_and(|actual| attachments::same_file_url(actual, &outgoing_url))
                     })
                 });
             if remaining {

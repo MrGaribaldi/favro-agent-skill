@@ -13,6 +13,8 @@ import subprocess
 import tempfile
 import unittest
 import uuid
+import urllib.request
+from urllib.parse import urlsplit, urlunsplit
 
 
 class LiveAttachments(unittest.TestCase):
@@ -43,7 +45,7 @@ class LiveAttachments(unittest.TestCase):
         cls.fixture = Path(cls.workspace.name) / "evidence.txt"
         cls.fixture.write_text("Favro attachment regression evidence.\n")
 
-    def run(self, *args):
+    def invoke(self, *args):
         return subprocess.run(
             [self.binary, "--collection", self.collection, *args],
             cwd=self.workspace.name, env=self.env, text=True,
@@ -51,14 +53,19 @@ class LiveAttachments(unittest.TestCase):
         )
 
     def cli(self, *args):
-        result = self.run(*args)
+        result = self.invoke(*args)
         self.assertEqual(result.returncode, 0, f"{args[0]} failed: {result.stderr}")
         return result.stdout
 
     def cli_fail(self, *args):
-        result = self.run(*args)
+        result = self.invoke(*args)
         self.assertNotEqual(result.returncode, 0, f"{args[0]} unexpectedly succeeded: {result.stdout}")
         return result.stderr
+
+    @staticmethod
+    def identity(url):
+        parts = urlsplit(url)
+        return urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
 
     def card(self, common_id):
         # Mutation checks inspect native task glyphs and compare descriptions
@@ -155,7 +162,9 @@ class LiveAttachments(unittest.TestCase):
             after = self.card(common_id)
             matching = [a for a in after["attachments"] if a["name"] == "report.md"]
             self.assertEqual(len(matching), 1, "replace must leave exactly one attachment with the name")
-            self.assertNotEqual(matching[0]["fileURL"], old_url, "replace must point at the new upload")
+            self.assertNotEqual(self.identity(matching[0]["fileURL"]), self.identity(old_url), "replace must point at the new upload")
+            with urllib.request.urlopen(matching[0]["fileURL"], timeout=30) as response:
+                self.assertEqual(response.read(), revised.read_bytes())
             # The rest of the description (the notes block) must survive untouched.
             self.assertIn("Notes before replace", after["detailedDescription"])
         finally:
@@ -182,10 +191,28 @@ class LiveAttachments(unittest.TestCase):
             self.cli("set-notes", "--card", common_id, "--text", "Notes survive detach")
             self.cli("attach", "--card", common_id, "--file", str(self.fixture), "--name", "keep.txt")
             self.cli("attach", "--card", common_id, "--file", str(self.fixture), "--name", "drop.txt")
-            self.cli("detach", "--card", common_id, "--name", "drop.txt")
+            self.cli("set-desc", "--card", common_id,
+                     "--text=- [x] Completed review\n- [ ] Pending review\nNotes survive detach")
+            # Ordinary writes deliberately preserve attachments, even without links.
+            self.assertEqual(len(self.card(common_id)["attachments"]), 2)
+            dropped_url = next(a["fileURL"] for a in self.card(common_id)["attachments"]
+                               if a["name"] == "drop.txt")
+            self.cli("attachment-delete", "--card", common_id, "--name", "drop.txt")
+            # Probe storage separately; card removal need not revoke signed URLs.
+            try:
+                with urllib.request.urlopen(dropped_url, timeout=30) as response:
+                    status = response.status
+            except urllib.error.HTTPError as error:
+                status = error.code
+            print(f"Detached download URL HTTP status: {status}")
             after = self.card(common_id)
             self.assertEqual([a["name"] for a in after["attachments"]], ["keep.txt"])
             self.assertIn("Notes survive detach", after["detailedDescription"])
+            self.assertIn("☑ Completed review", after["detailedDescription"])
+            self.assertIn("☐ Pending review", after["detailedDescription"])
+            # Also remove the last file: no remaining nodes is a valid rewrite.
+            self.cli("detach", "--card", common_id, "--name", "keep.txt")
+            self.assertEqual(self.card(common_id).get("attachments", []), [])
         finally:
             self.cli("archive", "--card", common_id)
 
@@ -195,12 +222,14 @@ class LiveAttachments(unittest.TestCase):
         common_id = re.search(r"\[([^\[\]]+)\]\s*$", output).group(1)
         try:
             # Two distinct uploads sharing a filename -- the case that motivated this feature.
-            for _ in range(2):
-                self.cli("attach", "--card", common_id, "--file", str(self.fixture), "--name", "dup.txt")
+            for index in range(2):
+                result = self.invoke("attach", "--card", common_id, "--file", str(self.fixture), "--name", "dup.txt")
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual("Warning:" in result.stderr, index == 1)
             before = self.card(common_id)
             self.assertEqual(len(before["attachments"]), 2)
             urls = [a["fileURL"] for a in before["attachments"]]
-            snapshot = (before["attachments"], before.get("detailedDescription"))
+            snapshot = ([(a["name"], self.identity(a["fileURL"])) for a in before["attachments"]], before.get("detailedDescription"))
 
             self.cli_fail("detach", "--card", common_id, "--name", "dup.txt")
             self.cli_fail("attach", "--card", common_id, "--file", str(self.fixture),
@@ -208,13 +237,21 @@ class LiveAttachments(unittest.TestCase):
             # Refusing an ambiguous target must not have mutated the card either way.
             after_refusal = self.card(common_id)
             self.assertEqual(
-                snapshot, (after_refusal["attachments"], after_refusal.get("detailedDescription"))
+                snapshot, ([(a["name"], self.identity(a["fileURL"])) for a in after_refusal["attachments"]], after_refusal.get("detailedDescription"))
             )
 
+            # A targeted replacement preserves the other same-named document.
+            self.cli("attach", "--card", common_id, "--file", str(self.fixture),
+                     "--name", "dup.txt", "--replace", "--replace-url", urls[0])
+            replaced = self.card(common_id)["attachments"]
+            self.assertEqual(len(replaced), 2)
+            replacement_urls = [a["fileURL"] for a in replaced if self.identity(a["fileURL"]) != self.identity(urls[1])]
+            self.assertEqual(len(replacement_urls), 1)
+            self.assertNotIn(self.identity(urls[0]), [self.identity(a["fileURL"]) for a in replaced])
             # --url disambiguates: exactly the targeted copy goes, the other survives.
-            self.cli("detach", "--card", common_id, "--name", "dup.txt", "--url", urls[0])
+            self.cli("detach", "--card", common_id, "--name", "dup.txt", "--url", replacement_urls[0])
             after = self.card(common_id)
-            self.assertEqual([a["fileURL"] for a in after["attachments"]], [urls[1]])
+            self.assertEqual([self.identity(a["fileURL"]) for a in after["attachments"]], [self.identity(urls[1])])
         finally:
             self.cli("archive", "--card", common_id)
 
