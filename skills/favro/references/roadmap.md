@@ -7,7 +7,8 @@ to build a roadmap authorizes publishing its contents; the human chooses what is
 
 ## Configuration and initialization
 
-Requires CLI 0.3.0+. These defaults work without adding a section:
+Requires CLI 0.3.1+ for Favro Markdown/plaintext round-trip support. These defaults
+work without adding a section:
 
 ```toml
 [roadmap]
@@ -53,7 +54,11 @@ favro roadmap list --lane "Neste" --json
 card numbers, with or without `#`; repeat `--work` or pass several arguments. Link
 changes deduplicate and sort references in the maintained `ROADMAP WORK` block.
 They preserve other description text, human checkbox ticks, the public block and
-attachments. Do not concurrently edit the same description. Malformed or duplicate
+attachments. The parser accepts Favro's Markdown `-`/`*`/`+` bullets and plaintext
+`•` bullets, ignoring blank lines, indentation, trailing whitespace and Markdown
+hard breaks. Markdown punctuation escapes (such as `\#`) are decoded before
+validating a reference. Non-reference content still fails instead of being skipped.
+Do not concurrently edit the same description. Malformed or duplicate
 managed blocks stop a write rather than guessing which text is safe to replace.
 
 `list` groups cards by configured lane and shows public status plus each linked work
@@ -73,7 +78,11 @@ favro roadmap unpublish --card '#4000'
 `set-public` writes the public title, text and UTC date into `ROADMAP PUBLIC` and adds
 the configured public tag in the **same** Markdown PUT. `unpublish` clears that block
 and removes the tag in the same write. Both preserve attachments and verify the exact
-card afterwards. Verification failures report that the write may already have happened;
+card afterwards. Verification compares parsed reference sets and public fields,
+so presentation-only Markdown changes do not cause false failures. Public fields
+accept the same layout/escape normalization; decoded text is still checked against
+all public-content and length limits. Verification failures report that the write
+may already have happened;
 inspect before retrying. An orphan public block alone is private; the tag alone is an
 export error. Generic `tag`/description commands can still create inconsistent state,
 which export deliberately refuses.

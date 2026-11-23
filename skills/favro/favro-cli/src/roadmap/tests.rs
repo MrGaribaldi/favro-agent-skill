@@ -10,10 +10,31 @@ struct Data {
     calls: Vec<(String, String, Option<Value>)>,
     lose_files: bool,
     lose_tag: bool,
+    corrupt_work: bool,
+    corrupt_public: bool,
 }
 #[derive(Default)]
 struct Mock {
     data: RefCell<Data>,
+}
+/// Simulate the relevant real plaintext round trip on every card write. This is
+/// intentionally independent of the parser under test (fixed protocol examples).
+fn favro_plaintext(text: &str) -> String {
+    text.lines()
+        .map(|line| {
+            if let Some(reference) = line.strip_prefix("- #") {
+                format!("• #{reference}")
+            } else if line.starts_with("Title: ")
+                || line.starts_with("Text: ")
+                || line.starts_with("Updated: ")
+            {
+                format!("  {line}  ")
+            } else {
+                line.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 impl Remote for Mock {
     fn entities(&self, path: &str, params: &[(&str, String)]) -> Result<Vec<Value>, String> {
@@ -71,6 +92,8 @@ impl Remote for Mock {
                 b["archived"] = json!(false);
                 b["tags"] = json!([]);
                 b["position"] = json!(n);
+                b["detailedDescription"] =
+                    json!(favro_plaintext(b["detailedDescription"].as_str().unwrap()));
                 d.cards.push(b.clone());
             }
             ("GET", p) if p.starts_with("/cards/") => {
@@ -124,9 +147,23 @@ impl Remote for Mock {
                     .filter(|l| !l.starts_with("!["))
                     .collect::<Vec<_>>()
                     .join("\n");
-                d.cards[index]["detailedDescription"] = json!(text);
+                d.cards[index]["detailedDescription"] = json!(favro_plaintext(&text));
                 if d.lose_files {
                     d.cards[index]["attachments"] = json!([]);
+                }
+                if d.corrupt_work {
+                    let text = d.cards[index]["detailedDescription"]
+                        .as_str()
+                        .unwrap()
+                        .replace("#3776", "#9999");
+                    d.cards[index]["detailedDescription"] = json!(text);
+                }
+                if d.corrupt_public {
+                    let text = d.cards[index]["detailedDescription"]
+                        .as_str()
+                        .unwrap()
+                        .replace("Dette er offentlig tekst.", "Endret tekst.");
+                    d.cards[index]["detailedDescription"] = json!(text);
                 }
                 return Ok(d.cards[index].clone());
             }
@@ -577,4 +614,169 @@ fn duplicate_public_ids_missing_positions_and_missing_tags_fail_closed() {
     api.data.borrow_mut().cards[0]["position"] = json!(1);
     api.data.borrow_mut().tags.clear();
     assert!(export_mock(&api).unwrap_err().contains("tag is missing"));
+}
+
+#[test]
+fn captured_favro_work_blocks_accept_markdown_plaintext_and_escaped_variants() {
+    for body in [
+        // Exact descriptionFormat=markdown response from #3780 (23 Nov 2026).
+        "<!-- ROADMAP WORK -->\n\n* #3776\n\n* #3779  \n  <!-- /ROADMAP WORK -->",
+        // Exact default plaintext response from the same card.
+        "<!-- ROADMAP WORK -->\n• #3776\n• #3779\n<!-- /ROADMAP WORK -->\n\n",
+        "<!-- ROADMAP WORK -->\n\n  * \\#3776  \n\n+ \\#3779\\\n <!-- /ROADMAP WORK -->",
+        "<!-- ROADMAP WORK -->\n- #3776\n\n+ #3779\n<!-- /ROADMAP WORK -->",
+    ] {
+        assert_eq!(
+            work_links(body).unwrap(),
+            BTreeSet::from([3776, 3779]),
+            "{body:?}"
+        );
+    }
+}
+
+#[test]
+fn normalized_add_list_link_publish_export_and_unpublish_round_trip() {
+    let api = ready();
+    run_mock(
+        &api,
+        Command::Add {
+            title: "Private title".into(),
+            lane: None,
+            work: vec!["#3776".into(), "#3779".into()],
+            body: "Private body\n<!-- RESULT -->evidence<!-- /RESULT -->".into(),
+        },
+    )
+    .unwrap();
+    let id = api.data.borrow().cards[0]["cardCommonId"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let listing = run_mock(
+        &api,
+        Command::List {
+            lane: None,
+            public_only: false,
+            json: true,
+        },
+    )
+    .unwrap()
+    .unwrap();
+    let v: Value = serde_json::from_str(&listing).unwrap();
+    assert_eq!(v[0]["work"][0]["number"], 3776);
+    assert_eq!(v[0]["work"][1]["number"], 3779);
+    // Feed the exact Markdown response shape into fresh-snapshot edits, too.
+    api.data.borrow_mut().cards[0]["detailedDescription"]=json!("Private body\n<!-- RESULT -->evidence<!-- /RESULT -->\n<!-- ROADMAP WORK -->\n\n* \\#3776\n\n+ #3779  \n  <!-- /ROADMAP WORK -->");
+    run_mock(
+        &api,
+        Command::Link {
+            card: id.clone(),
+            work: vec!["3780".into()],
+            unlink: false,
+        },
+    )
+    .unwrap();
+    run_mock(
+        &api,
+        Command::Link {
+            card: id.clone(),
+            work: vec!["3779".into()],
+            unlink: true,
+        },
+    )
+    .unwrap();
+    publish(&api, &id);
+    run_mock(
+        &api,
+        Command::Link {
+            card: id.clone(),
+            work: vec!["3781".into()],
+            unlink: false,
+        },
+    )
+    .unwrap();
+    let out = export_mock(&api).unwrap();
+    let v: Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(v["lanes"][0]["items"][0]["title"], "Offentlig tittel");
+    assert_eq!(
+        v["lanes"][0]["items"][0]["text"],
+        "Dette er offentlig tekst."
+    );
+    assert!(!out.contains("Private"));
+    assert!(!out.contains("3776"));
+    let desc = description(&api.data.borrow().cards[0]).unwrap();
+    assert_eq!(
+        work_links(&desc).unwrap(),
+        BTreeSet::from([3776, 3780, 3781])
+    );
+    assert!(desc.contains("Private body"));
+    assert!(desc.contains("<!-- RESULT -->evidence<!-- /RESULT -->"));
+    run_mock(&api, Command::Unpublish { card: id }).unwrap();
+    let out: Value = serde_json::from_str(&export_mock(&api).unwrap()).unwrap();
+    assert_eq!(out["lanes"][0]["items"], json!([]));
+}
+
+#[test]
+fn public_fields_accept_formatting_but_revalidate_decoded_copy_and_dates() {
+    let config = Roadmap::default();
+    let text="<!-- ROADMAP PUBLIC -->\n\n* Title\\: Offentlig tittel  \n\n+ Text: Versjon 1\\.0 er klar\\!\\\n\n- Updated: 2026\\-11\\-23  \n  <!-- /ROADMAP PUBLIC -->";
+    let copy = public_copy(text, &config).unwrap().unwrap();
+    assert_eq!(copy.title, "Offentlig tittel");
+    assert_eq!(copy.text, "Versjon 1.0 er klar!");
+    assert_eq!(copy.updated, "2026-11-23");
+    for unsafe_text in [
+        r"\\#3776",
+        r"\#3776",
+        r"favro\.com/secret",
+        r"https\:\/\/private.example",
+        r"\<b\>secret\<\/b\>",
+        r"\*secret\*",
+        r"text\nsecret",
+    ] {
+        let body=format!("{PUBLIC_START}\nTitle: Tittel\n\nText: {unsafe_text}\n\nUpdated: 2026-11-23\n{PUBLIC_END}");
+        assert!(
+            public_copy(&body, &config).is_err(),
+            "accepted {unsafe_text:?}"
+        );
+    }
+    let body = text.replace("Offentlig tittel", &"æ".repeat(121));
+    assert!(public_copy(&body, &config).is_err());
+    let body = text.replace(r"Versjon 1\.0 er klar\!\", &"ø".repeat(401));
+    assert!(public_copy(&body, &config).is_err());
+    let body = text.replace(r"2026\-11\-23", r"2026\-02\-30");
+    assert!(public_copy(&body, &config).is_err());
+}
+
+#[test]
+fn semantic_write_verification_still_detects_changed_references_and_public_copy() {
+    for public in [false, true] {
+        let api = ready();
+        seed(&api, "test", 1.0);
+        let error = if public {
+            api.data.borrow_mut().corrupt_public = true;
+            run_mock(
+                &api,
+                Command::SetPublic {
+                    card: "test".into(),
+                    title: "Offentlig tittel".into(),
+                    text: "Dette er offentlig tekst.".into(),
+                },
+            )
+            .unwrap_err()
+        } else {
+            api.data.borrow_mut().corrupt_work = true;
+            run_mock(
+                &api,
+                Command::Link {
+                    card: "test".into(),
+                    work: vec!["3776".into()],
+                    unlink: false,
+                },
+            )
+            .unwrap_err()
+        };
+        assert!(
+            error.contains("was updated but managed block verification failed"),
+            "{error}"
+        );
+    }
 }

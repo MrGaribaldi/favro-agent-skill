@@ -18,7 +18,7 @@ which -a favro
 favro --version
 ```
 
-`which -a favro` should show the intended installation first; `favro --version` must report 0.3.0 or newer.
+`which -a favro` should show the intended installation first; `favro --version` must report 0.3.1 or newer.
 
 When working from the repository root:
 
@@ -160,6 +160,12 @@ for a reviewed public artifact. Production sites should read that artifact and n
 hold a Favro token.
 
 ## Changelog
+
+- 0.3.1: accept Favro-normalized work/public blocks (Markdown `-`/`*`/`+` and
+  plaintext `•` bullets, blank lines, indentation, hard breaks and punctuation
+  escapes). Verify parsed references/public fields rather than raw Markdown;
+  retain export validation after decoding. Regression mocks now normalize create
+  and update responses, with captured live shapes and changed-content checks.
 
 - 0.3.0: configurable feature roadmaps, attachment-preserving work/public blocks,
   public-tag opt-in, internal work-lane inspection, and deterministic fail-closed JSON

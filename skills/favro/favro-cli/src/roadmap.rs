@@ -153,13 +153,41 @@ fn references(values: &[String]) -> Result<BTreeSet<u64>, String> {
         })
         .collect()
 }
+/// Decode presentation changes Favro makes to managed-block lines, not user escapes
+/// such as `\n`. Strip one list marker, whitespace and Markdown hard breaks; only
+/// ASCII punctuation may be backslash-escaped by Markdown. Consumers still validate
+/// the decoded reference/public fields strictly.
+fn managed_line(line: &str) -> String {
+    let mut line = line.trim();
+    // An odd terminal slash denotes a Markdown hard break. An escaped literal
+    // backslash (even count) remains data and will fail field validation.
+    if line.chars().rev().take_while(|ch| *ch == '\\').count() % 2 == 1 {
+        line = line[..line.len() - 1].trim_end();
+    }
+    let mut chars = line.chars().peekable();
+    let mut decoded = String::new();
+    while let Some(ch) = chars.next() {
+        if ch == '\\' && chars.peek().is_some_and(char::is_ascii_punctuation) {
+            decoded.push(chars.next().unwrap());
+        } else {
+            decoded.push(ch);
+        }
+    }
+    if let Some(rest) = decoded.strip_prefix(['-', '*', '+', '•']) {
+        if rest.starts_with(char::is_whitespace) {
+            return rest.trim().to_string();
+        }
+    }
+    decoded
+}
 fn work_links(text: &str) -> Result<BTreeSet<u64>, String> {
     let Some(body) = block(text, WORK_START, WORK_END)? else {
         return Ok(BTreeSet::new());
     };
     let values: Vec<String> = body
         .lines()
-        .map(|s| s.trim().trim_start_matches("- ").to_string())
+        .map(managed_line)
+        .filter(|line| !line.is_empty())
         .collect();
     references(&values)
 }
@@ -219,7 +247,8 @@ fn public_copy(text: &str, config: &Roadmap) -> Result<Option<PublicCopy>, Strin
     };
     let lines: Vec<_> = body
         .lines()
-        .filter(|line| !line.trim().is_empty())
+        .map(managed_line)
+        .filter(|line| !line.is_empty())
         .collect();
     if lines.len() != 3 {
         return Err("Public block must contain Title, Text and Updated lines".into());
@@ -410,10 +439,13 @@ fn select(api: &impl Remote, widget: &str, reference: &str) -> Result<Value, Str
 /// One Markdown PUT carries text and tag state; verify the exact instance afterwards.
 fn write(
     api: &impl Remote,
+    config: &Roadmap,
     before: &Value,
     text: &str,
     tag_change: Option<(&str, bool)>,
 ) -> Result<(), String> {
+    let expected_work = work_links(text)?;
+    let expected_public = public_copy(text, config)?;
     let text = attachments::preserve_in_markdown_except(
         before,
         &crate::checkboxes_to_markdown(text),
@@ -445,12 +477,19 @@ fn write(
         }
     }
     // Verify managed content too: a successful HTTP response alone isn't a round trip.
-    let actual = description(&after)?;
-    for (start, end) in [(WORK_START, WORK_END), (PUBLIC_START, PUBLIC_END)] {
-        if block(text.as_str(), start, end)? != block(&actual, start, end)? {
-            return Err("Roadmap card was updated but managed block verification failed".into());
+    // Compare meaning, not Markdown spelling: Favro changes bullets, escapes,
+    // indentation and blank lines between the write and this plaintext read.
+    let verify = || -> Result<(), String> {
+        let actual = description(&after)?;
+        if work_links(&actual)? != expected_work || public_copy(&actual, config)? != expected_public
+        {
+            return Err("managed content differs from the requested values".into());
         }
-    }
+        Ok(())
+    };
+    verify().map_err(|error| {
+        format!("Roadmap card was updated but managed block verification failed: {error}")
+    })?;
     Ok(())
 }
 fn export(
@@ -594,7 +633,7 @@ pub fn run(
                     links.insert(n);
                 }
             }
-            write(api, &before, &write_links(&text, &links)?, None)?;
+            write(api, config, &before, &write_links(&text, &links)?, None)?;
             Ok(Some(format!("Updated work links on {card}")))
         }
         Command::SetPublic { card, title, text } => {
@@ -615,13 +654,25 @@ pub fn run(
                 PUBLIC_END,
                 Some(&content),
             )?;
-            write(api, &before, &text, Some((&config.public_tag, true)))?;
+            write(
+                api,
+                config,
+                &before,
+                &text,
+                Some((&config.public_tag, true)),
+            )?;
             Ok(Some(format!("Updated public copy on {card}")))
         }
         Command::Unpublish { card } => {
             let before = select(api, &widget, &card)?;
             let text = replace(&description(&before)?, PUBLIC_START, PUBLIC_END, None)?;
-            write(api, &before, &text, Some((&config.public_tag, false)))?;
+            write(
+                api,
+                config,
+                &before,
+                &text,
+                Some((&config.public_tag, false)),
+            )?;
             Ok(Some(format!("Unpublished {card}")))
         }
         Command::Export { out, .. } => {
