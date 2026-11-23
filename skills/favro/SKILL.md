@@ -11,7 +11,7 @@ Use the `favro` CLI from `PATH`. Do not expose credentials in commands, output, 
 
 ## Start
 
-1. Run `favro --version` and require version 0.2.5 or newer. A missing version flag indicates a pre-0.2 binary; do not continue with it. Follow [favro-cli/README.md](favro-cli/README.md) to install or replace the CLI in the current agent environment, then verify PATH resolution again.
+1. Run `favro --version` and require version 0.3.0 or newer. A missing version flag indicates a pre-0.2 binary; do not continue with it. Follow [favro-cli/README.md](favro-cli/README.md) to install or replace the CLI in the current agent environment, then verify PATH resolution again.
 2. Locate `.favro/project.toml`: explicit `--config`, `FAVRO_PROJECT_CONFIG`, current directory, then parents.
 3. Run `favro check` before project mutations. `favro list-collections` is the minimal authentication/connectivity check.
 4. If no project is configured, ask the user to choose a name and visibility. Offer the repository/directory name or a generated memorable name. Ask whether interview cards should contain one topic or one question. Then run `favro init`; do not create a collection before the user chooses.
@@ -73,3 +73,14 @@ removing. Removal fails if the dependency in that direction is missing. Use
 Use `--role <role-key>` or `FAVRO_ROLE` whenever a project defines multiple roles; it selects the immutable comment prefix and credential profile. Read [references/cli.md](references/cli.md) for commands, Markdown round-trip constraints, attachments, tags, dependencies, and troubleshooting.
 
 For code-specific review and commit behavior, read [references/development-profile.md](references/development-profile.md). Those rules do not apply to non-code work unless the project enables that profile.
+
+## Feature roadmaps
+
+Use `favro roadmap` for a feature/theme board distinct from task/workstream boards.
+Keep implementation cards on their owning boards and link them from roadmap cards.
+Read [references/roadmap.md](references/roadmap.md) before setting up a roadmap,
+maintaining public copy, or exporting it. Only `roadmap export --public --format json`
+produces publication-safe data; ordinary `get`, `list`, and `roadmap list` remain internal.
+A roadmap card is public only with both the configured tag and a valid public block.
+Agree which features and wording are public before `set-public`; an internal roadmap
+never grants permission to publish its descriptions, links, people, or attachments.

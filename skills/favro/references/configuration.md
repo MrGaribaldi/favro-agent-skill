@@ -121,3 +121,12 @@ allow_unassigned_handoffs = true
 ```
 
 Pre-0.2 `project.import_legacy_cache` is rejected with a migration-specific error because its old behavior split into two independent settings. Migrate projects one at a time. Preserve collection/board names, lane semantics, watcher assumptions, credential source, and review behavior before adopting generic defaults. `legacy_cache_path` controls only one-time ID-cache import. `allow_unassigned_handoffs` separately preserves checklist/lane handoffs for projects that have not configured participants.
+
+## Roadmap (0.3.0+)
+
+The optional `[roadmap]` section defaults to a dedicated `Veikart` board, four ordered
+lanes, stable public lane keys, the `roadmap:public` tag, and a 400-character public-text
+limit. Lane names and keys must be unique, non-empty lists of equal length. Keys use
+lowercase ASCII letters, digits, `-` or `_`; the board must differ from role boards.
+See [roadmap.md](roadmap.md) for a complete example and the export boundary. Configuring
+this section does not create anything: `roadmap init` is the explicit structure write.

@@ -10,7 +10,7 @@ Rust 1.82 or newer is required.
 
 ```bash
 cargo install --path skills/favro/favro-cli
-favro --version    # must report 0.2.1 or newer
+favro --version    # must report 0.3.0 or newer
 ```
 
 Install and verify the CLI separately in **every** agent/container environment. Home directories and `PATH` binaries are often not shared even when the project workspace is, and a stale pre-0.2 binary fails in confusing ways — which is why the skill's first step is a version check. See [CLI installation details](skills/favro/favro-cli/README.md) for `PATH` shadowing, `--root`, authentication and upgrades.
@@ -33,7 +33,7 @@ $EDITOR .favro/project.toml
 favro check           # validates config, credentials, boards, users, shared fields
 ```
 
-`project.toml` is safe to commit: it names environment variables, never tokens. Structure is created only by the explicit `ensure-project` and `ensure-board` commands — inspection commands never create collections, boards or lanes.
+`project.toml` is safe to commit: it names environment variables, never tokens. Structure is created only by the explicit `ensure-project`, `ensure-board` and `roadmap init` commands — inspection commands never create collections, boards or lanes.
 
 Read [the skill](skills/favro/SKILL.md) for operating rules, then the references it links for [configuration](skills/favro/references/configuration.md), [workflow](skills/favro/references/workflow.md), [CLI details](skills/favro/references/cli.md) and the optional [development profile](skills/favro/references/development-profile.md).
 

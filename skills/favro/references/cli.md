@@ -15,7 +15,7 @@ favro review-queue
 favro list --board product --lane Ready
 ```
 
-`init` never overwrites an existing TOML. `check`, `list`, `overview`, and `review-queue` are structurally read-only: missing collections, boards, or lanes are reported rather than created. Only `ensure-project` and `ensure-board` create project structure, and should be run after the names and visibility are confirmed. `check` also validates all configured credential variables, role boards, participant/auth user IDs, visibility, and shared fields.
+`init` never overwrites an existing TOML. `check`, `list`, `overview`, and `review-queue` are structurally read-only: missing collections, boards, or lanes are reported rather than created. Only `ensure-project`, `ensure-board`, and `roadmap init` create project structure, and should be run after the names and visibility are confirmed. `check` also validates all configured credential variables, role boards, participant/auth user IDs, visibility, and shared fields.
 
 ## Cards and metadata
 
@@ -198,3 +198,11 @@ IDs are cached under `FAVRO_STATE`, `$XDG_CACHE_HOME/favro/state.json`, `$HOME/.
 - When an account belongs to multiple organizations, set its configured organization-ID variable.
 - Missing boards or lanes do not get repaired by inspection commands. Confirm the intended structure, then run `ensure-project` or `ensure-board` explicitly.
 - Cards whose only instance is on an archived Favro board are deliberately hidden from CLI resolution. Un-archive the board in Favro before rescuing or moving those cards.
+
+## Roadmap commands (0.3.0+)
+
+`favro roadmap init|add|link|set-public|unpublish|list|export` operates on the configured
+feature/theme board. See [roadmap.md](roadmap.md) for command examples and the public
+schema. Ordinary card reads and `roadmap list --public-only --json` are **internal**:
+the latter still exposes work links and internal names. Use only
+`roadmap export --public --format json` for public artifacts.

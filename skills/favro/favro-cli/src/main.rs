@@ -13,8 +13,10 @@
 //! misleading `403 Access denied`. `move` therefore resolves the cardId first.
 
 mod attachments;
+mod boards;
 mod comment_poll;
 mod config;
+mod roadmap;
 
 use base64::Engine;
 use clap::{Parser, Subcommand};
@@ -65,6 +67,11 @@ enum Cmd {
         visibility: Option<String>,
         #[arg(long)]
         interview_granularity: Option<String>,
+    },
+    /// Maintain an internal feature roadmap and export only approved public text.
+    Roadmap {
+        #[command(subcommand)]
+        command: roadmap::Command,
     },
     /// Validate project configuration and connectivity.
     Check,
@@ -830,6 +837,22 @@ impl Api {
     }
 }
 
+impl boards::Remote for Api {
+    fn entities(&self, path: &str, params: &[(&str, String)]) -> Result<Vec<Value>, String> {
+        Ok(self.paginate(path, params))
+    }
+    fn request_json(
+        &self,
+        method: &str,
+        path: &str,
+        params: &[(&str, String)],
+        body: Option<Value>,
+    ) -> Result<Value, String> {
+        self.try_request(method, path, params, body, None)
+            .map(|(value, _)| value)
+    }
+}
+
 // ----------------------------------------------------------------- structure
 fn resolve_org(state: &mut Value) -> String {
     if let Ok(id) = std::env::var("FAVRO_ORG_ID") {
@@ -1000,74 +1023,9 @@ fn resolve_board(
         }
     }
 
-    let widgets = api.paginate("/widgets", &[("collectionId", collection_id.clone())]);
-    let widget = match widgets
-        .iter()
-        .find(|widget| {
-            widget.get("name").and_then(Value::as_str) == Some(board)
-                && widget.get("archived").and_then(Value::as_bool) != Some(true)
-                && widget.get("type").and_then(Value::as_str) == Some("board")
-        })
-        .cloned()
-    {
-        Some(value) => value,
-        None if create => {
-            let (body, _) = api.request(
-                "POST",
-                "/widgets",
-                &[],
-                Some(json!({
-                    "collectionId": collection_id,
-                    "name": board,
-                    "type": "board",
-                    "color": "blue"
-                })),
-                None,
-            );
-            body
-        }
-        None => die(format!(
-            "Board {board:?} does not exist in collection {collection:?}. Check the name or create it explicitly with `favro ensure-board --board {board:?}`."
-        )),
-    };
-    let widget_id = widget
-        .get("widgetCommonId")
-        .and_then(|value| value.as_str())
-        .unwrap_or_default()
-        .to_string();
-
-    let mut existing = serde_json::Map::new();
-    for column in api.paginate("/columns", &[("widgetCommonId", widget_id.clone())]) {
-        if let (Some(name), Some(id)) = (
-            column.get("name").and_then(|value| value.as_str()),
-            column.get("columnId").and_then(|value| value.as_str()),
-        ) {
-            existing.insert(name.to_string(), json!(id));
-        }
-    }
-    if create {
-        for lane in lanes
-            .iter()
-            .map(String::as_str)
-            .chain(std::iter::once("unscheduled"))
-        {
-            if !existing.contains_key(lane) {
-                let (body, _) = api.request(
-                    "POST",
-                    "/columns",
-                    &[],
-                    Some(json!({"widgetCommonId": widget_id, "name": lane})),
-                    None,
-                );
-                let id = body
-                    .get("columnId")
-                    .and_then(|value| value.as_str())
-                    .unwrap_or_default()
-                    .to_string();
-                existing.insert(lane.to_string(), json!(id));
-            }
-        }
-    }
+    let (widget_id, existing) =
+        boards::resolve(&api, &collection_id, collection, board, lanes, create, true)
+            .unwrap_or_else(|error| die(error));
 
     let cache = collection_cache_mut(&mut state, &api.org, collection);
     let boards = cache
@@ -1638,6 +1596,19 @@ fn main() {
         .map(|c| c.workflow.review.clone())
         .unwrap_or_else(|| "Review".into());
     match cli.cmd {
+        Cmd::Roadmap { command } => {
+            let config = project
+                .as_ref()
+                .unwrap_or_else(|| die("roadmap requires .favro/project.toml"));
+            let api = api_handle();
+            let mut state = read_state();
+            let collection_id = resolve_collection(&api, &mut state, &collection, false);
+            let output = roadmap::run(&api, &collection_id, &collection, &config.roadmap, command)
+                .unwrap_or_else(|error| die(error));
+            if let Some(output) = output {
+                println!("{output}");
+            }
+        }
         Cmd::Init { .. } => unreachable!(),
         Cmd::Check => {
             let config = project
@@ -1918,16 +1889,35 @@ fn main() {
             }
         }
         Cmd::Move { card, lane } => {
-            if !lanes.contains(&lane) {
-                die(format!(
-                    "Unknown lane {lane:?}; configured lanes are {lanes:?}"
-                ));
-            }
             let api = api_handle();
             let c = find_card(&api, &collection, &card);
+            let is_roadmap = project.as_ref().is_some_and(|cfg| {
+                api.paginate(
+                    "/widgets",
+                    &[(
+                        "collectionId",
+                        resolve_collection(&api, &mut read_state(), &collection, false),
+                    )],
+                )
+                .iter()
+                .any(|w| {
+                    w["widgetCommonId"] == c["widgetCommonId"]
+                        && w["name"].as_str() == Some(cfg.roadmap.board.as_str())
+                })
+            });
+            let allowed_lanes = if is_roadmap {
+                &project.as_ref().unwrap().roadmap.lanes
+            } else {
+                &lanes
+            };
+            if !allowed_lanes.contains(&lane) {
+                die(format!(
+                    "Unknown lane {lane:?}; configured lanes are {allowed_lanes:?}"
+                ));
+            }
             if project
                 .as_ref()
-                .is_some_and(|cfg| lane == cfg.workflow.done)
+                .is_some_and(|cfg| !is_roadmap && lane == cfg.workflow.done)
             {
                 let cfg = project.as_ref().unwrap();
                 if cfg.completion.require_result
@@ -3473,5 +3463,43 @@ mod tests {
             "legacy-board"
         );
         assert_eq!(migrated["roleEmojis"]["product"], "🧩");
+    }
+    #[test]
+    fn roadmap_cli_requires_explicit_public_export_and_parses_all_commands() {
+        assert!(Cli::try_parse_from(["favro", "roadmap", "export"]).is_err());
+        assert!(
+            Cli::try_parse_from(["favro", "roadmap", "export", "--public", "--format", "csv"])
+                .is_err()
+        );
+        assert!(Cli::try_parse_from(["favro", "roadmap", "link", "--card", "#1"]).is_err());
+        for args in [
+            vec!["init"],
+            vec![
+                "add", "--title", "Feature", "--work", "#1", "#2", "--work", "3",
+            ],
+            vec!["link", "--card", "#1", "--work", "#2", "--unlink"],
+            vec![
+                "set-public",
+                "--card",
+                "#1",
+                "--title",
+                "Tittel",
+                "--text",
+                "Tekst.",
+            ],
+            vec!["unpublish", "--card", "#1"],
+            vec!["list", "--lane", "Neste", "--public-only", "--json"],
+            vec![
+                "export",
+                "--public",
+                "--format",
+                "json",
+                "--out",
+                "roadmap.json",
+            ],
+        ] {
+            let cli = Cli::try_parse_from([vec!["favro", "roadmap"], args].concat()).unwrap();
+            assert!(matches!(cli.cmd, Cmd::Roadmap { .. }));
+        }
     }
 }

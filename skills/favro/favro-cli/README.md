@@ -18,7 +18,7 @@ which -a favro
 favro --version
 ```
 
-`which -a favro` should show the intended installation first; `favro --version` must report 0.2.5 or newer.
+`which -a favro` should show the intended installation first; `favro --version` must report 0.3.0 or newer.
 
 When working from the repository root:
 
@@ -149,3 +149,19 @@ file's identity, rather than accepting any existing file with the same name.
 The live test runner previously overrode `unittest.TestCase.run`, preventing the
 suite from executing. It now uses `invoke` for CLI calls, normalizes signatures
 in assertions and downloads replacement bytes to verify the actual new content.
+
+## Feature roadmaps (0.3.0+)
+
+`favro roadmap` maintains one feature/theme board with private work links and opt-in
+public copy. See the [roadmap reference](../references/roadmap.md) for configuration,
+commands, round-trip guarantees, and the public export schema. `roadmap list` is an
+internal coordination view; only `roadmap export --public --format json` is suitable
+for a reviewed public artifact. Production sites should read that artifact and never
+hold a Favro token.
+
+## Changelog
+
+- 0.3.0: configurable feature roadmaps, attachment-preserving work/public blocks,
+  public-tag opt-in, internal work-lane inspection, and deterministic fail-closed JSON
+  export using read access only. Existing `move` supports roadmap lanes. No new
+  credentials or dependencies.
