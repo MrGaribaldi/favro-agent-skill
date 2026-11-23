@@ -28,7 +28,7 @@ do it deliberately.
 
 - **Inspection never mutates.** `list`, `overview`, `review-queue`, `check` and
   card lookup must not create collections, boards or lanes. Only `ensure-project`
-  and `ensure-board` create structure, and only after the operator has confirmed
+  and `ensure-board` (plus `roadmap init` for a roadmap) create structure, and only after the operator has confirmed
   names and visibility.
 - **Secrets stay out of `project.toml`.** The file names environment variables.
   It is meant to be committed.

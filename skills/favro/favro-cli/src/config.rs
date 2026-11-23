@@ -39,8 +39,67 @@ pub struct ProjectConfig {
     pub history: History,
     #[serde(default)]
     pub compatibility: Compatibility,
+    #[serde(default)]
+    pub roadmap: Roadmap,
     #[serde(skip)]
     pub source: Option<PathBuf>,
+}
+
+/// Parallel lane names/keys keep public keys stable when display labels change.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Roadmap {
+    pub board: String,
+    pub lanes: Vec<String>,
+    pub lane_keys: Vec<String>,
+    pub public_tag: String,
+    pub max_public_chars: usize,
+}
+impl Default for Roadmap {
+    fn default() -> Self {
+        Self {
+            board: "Veikart".into(),
+            lanes: ["Nå", "Neste", "Senere", "Lansert"]
+                .map(String::from)
+                .to_vec(),
+            lane_keys: ["now", "next", "later", "released"]
+                .map(String::from)
+                .to_vec(),
+            public_tag: "roadmap:public".into(),
+            max_public_chars: 400,
+        }
+    }
+}
+impl Roadmap {
+    pub fn validate(&self) -> Result<(), String> {
+        if self.board.trim().is_empty() || self.public_tag.trim().is_empty() {
+            return Err("roadmap.board and roadmap.public_tag must not be empty".into());
+        }
+        if self.lanes.is_empty() || self.lanes.len() != self.lane_keys.len() {
+            return Err("roadmap.lanes and roadmap.lane_keys need the same non-zero length".into());
+        }
+        for (label, values) in [("lanes", &self.lanes), ("lane_keys", &self.lane_keys)] {
+            let mut seen = HashSet::new();
+            if values
+                .iter()
+                .any(|v| v.trim().is_empty() || v.chars().any(char::is_control) || !seen.insert(v))
+            {
+                return Err(format!("roadmap.{label} must be non-empty, unique labels"));
+            }
+        }
+        if self.lane_keys.iter().any(|k| {
+            !k.bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_')
+        }) {
+            return Err(
+                "roadmap.lane_keys must use lowercase ASCII letters, numbers, - or _".into(),
+            );
+        }
+        if !(1..=4000).contains(&self.max_public_chars) {
+            return Err("roadmap.max_public_chars must be between 1 and 4000".into());
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
@@ -311,6 +370,10 @@ impl ProjectConfig {
     }
 
     pub fn validate(&self) -> Result<(), String> {
+        self.roadmap.validate()?;
+        if self.roles.values().any(|r| r.board == self.roadmap.board) {
+            return Err("roadmap.board must be separate from role/workstream boards".into());
+        }
         if self.project.collection.trim().is_empty() {
             return Err("project.collection must not be empty".into());
         }
@@ -612,5 +675,51 @@ require_reveiw = false
         parsed.validate().unwrap();
         assert!(!text.contains("token ="));
         assert!(text.contains("token_env"));
+    }
+    #[test]
+    fn roadmap_configuration_defaults_custom_keys_and_validation() {
+        let config = parse("");
+        assert_eq!(
+            config.roadmap.lane_keys,
+            ["now", "next", "later", "released"]
+        );
+        let config = parse(
+            r#"[roadmap]
+board="Features"
+lanes=["Aktiv", "Ferdig"]
+lane_keys=["active", "released"]
+public_tag="approved"
+max_public_chars=300
+"#,
+        );
+        config.validate().unwrap();
+        let mut broken = config.clone();
+        broken.roadmap.lane_keys.pop();
+        assert!(broken.validate().is_err());
+        let mut broken = config.clone();
+        broken.roadmap.lane_keys[1] = "active".into();
+        assert!(broken.validate().is_err());
+        let mut broken = config.clone();
+        broken.roadmap.lanes[1] = "Aktiv".into();
+        assert!(broken.validate().is_err());
+        let mut broken = config.clone();
+        broken.roadmap.max_public_chars = 0;
+        assert!(broken.validate().is_err());
+        let mut broken = config.clone();
+        broken.roadmap.lane_keys[1] = "Ferdig".into();
+        assert!(broken.validate().is_err());
+        let mut broken = config.clone();
+        broken.roadmap.public_tag.clear();
+        assert!(broken.validate().is_err());
+        let mut broken = config;
+        broken.roles.insert(
+            "work".into(),
+            Role {
+                board: "Features".into(),
+                emoji: "W".into(),
+                ..Role::default()
+            },
+        );
+        assert!(broken.validate().is_err());
     }
 }
